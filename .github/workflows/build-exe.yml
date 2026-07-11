@@ -23,14 +23,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install --index-url https://download.pytorch.org/whl/cpu torch==2.1.0 torchaudio==2.1.0
           pip install -r requirements.txt
-          pip install pyinstaller
+          pip install pyinstaller pywebview
 
-      - name: Build EXE
+      - name: Build EXE (windowed, no CMD)
         run: |
-          pyinstaller --onefile --name quran-reciter-backend --collect-all speechbrain --collect-all librosa --collect-all faiss --collect-data sklearn run_server.py
+          pyinstaller --onefile --noconsole --name QuranReciterID `
+            --collect-all speechbrain --collect-all librosa `
+            --collect-all faiss --collect-data sklearn `
+            --collect-all webview `
+            launcher.py
 
       - uses: actions/upload-artifact@v4
         with:
-          name: quran-reciter-backend-exe
-          path: quran-reciter-id/backend/dist/quran-reciter-backend.exe
+          name: QuranReciterID-exe
+          path: quran-reciter-id/backend/dist/QuranReciterID.exe
           if-no-files-found: error
