@@ -1,0 +1,120 @@
+{
+  "version": "1.0",
+  "reciters": [
+    {
+      "id": 1,
+      "name": "عبد الباسط عبد الصمد",
+      "name_english": "Abdul Basit Abdus Samad",
+      "country": "مصر",
+      "bio": "قارئ مصري شهير، يعتبر من أعظم قراء القرآن في العصر الحديث. ولد في قرية المراعزة بمحافظة قنا عام 1927م.",
+      "birth_year": "1927",
+      "death_year": "1988",
+      "image_url": "https://example.com/images/abdul_basit.jpg",
+      "recitation_style": "مجود"
+    },
+    {
+      "id": 2,
+      "name": "محمد صديق المنشاوي",
+      "name_english": "Mohamed Siddiq Al-Minshawi",
+      "country": "مصر",
+      "bio": "قارئ مصري مشهور بصوته الندي وأدائه المؤثر. ولد في المنشاة بمحافظة سوهاج عام 1920م.",
+      "birth_year": "1920",
+      "death_year": "1969",
+      "image_url": "https://example.com/images/minshawi.jpg",
+      "recitation_style": "مرتل"
+    },
+    {
+      "id": 3,
+      "name": "محمود خليل الحصري",
+      "name_english": "Mahmoud Khalil Al-Hussary",
+      "country": "مصر",
+      "bio": "قارئ مصري متقن للتجويد، يعتبر مرجعاً في التلاوة المجودة. ولد في قرية شبرا النملة بطنطا عام 1917م.",
+      "birth_year": "1917",
+      "death_year": "1980",
+      "image_url": "https://example.com/images/hussary.jpg",
+      "recitation_style": "مجود"
+    },
+    {
+      "id": 4,
+      "name": "مشاري راشد العفاسي",
+      "name_english": "Mishary Rashid Alafasy",
+      "country": "الكويت",
+      "bio": "قارئ كويتي معاصر، إمام وخطيب مسجد الكبير بالكويت. ولد عام 1976م.",
+      "birth_year": "1976",
+      "death_year": null,
+      "image_url": "https://example.com/images/alafasy.jpg",
+      "recitation_style": "مرتل"
+    },
+    {
+      "id": 5,
+      "name": "ماهر المعيقلي",
+      "name_english": "Maher Al Muaiqly",
+      "country": "السعودية",
+      "bio": "قارئ سعودي، إمام المسجد الحرام بمكة المكرمة. ولد عام 1969م.",
+      "birth_year": "1969",
+      "death_year": null,
+      "image_url": "https://example.com/images/muaiqly.jpg",
+      "recitation_style": "مرتل"
+    },
+    {
+      "id": 6,
+      "name": "سعود الشريم",
+      "name_english": "Saud Al-Shuraim",
+      "country": "السعودية",
+      "bio": "قارئ سعودي، إمام وخطيب المسجد الحرام. ولد عام 1966م.",
+      "birth_year": "1966",
+      "death_year": null,
+      "image_url": "https://example.com/images/shuraim.jpg",
+      "recitation_style": "مرتل"
+    },
+    {
+      "id": 7,
+      "name": "عبد الرحمن السديس",
+      "name_english": "Abdurrahman As-Sudais",
+      "country": "السعودية",
+      "bio": "قارئ سعودي، الرئيس العام لشؤون المسجد الحرام والمسجد النبوي. ولد عام 1960م.",
+      "birth_year": "1960",
+      "death_year": null,
+      "image_url": "https://example.com/images/sudais.jpg",
+      "recitation_style": "مرتل"
+    },
+    {
+      "id": 8,
+      "name": "ياسر الدوسري",
+      "name_english": "Yasser Al-Dosari",
+      "country": "السعودية",
+      "bio": "قارئ سعودي معاصر، إمام وخطيب بالمسجد الحرام. ولد عام 1981م.",
+      "birth_year": "1981",
+      "death_year": null,
+      "image_url": "https://example.com/images/dosari.jpg",
+      "recitation_style": "مرتل"
+    },
+    {
+      "id": 9,
+      "name": "سعد الغامدي",
+      "name_english": "Saad Al-Ghamdi",
+      "country": "السعودية",
+      "bio": "قارئ سعودي، إمام وخطيب جامع قباء بالمدينة المنورة سابقاً. ولد عام 1967م.",
+      "birth_year": "1967",
+      "death_year": null,
+      "image_url": "https://example.com/images/ghamdi.jpg",
+      "recitation_style": "مرتل"
+    },
+    {
+      "id": 10,
+      "name": "أحمد العجمي",
+      "name_english": "Ahmad Al-Ajmi",
+      "country": "السعودية",
+      "bio": "قارئ سعودي معاصر، مشهور بقراءاته في صلاة التراويح. ولد عام 1968م.",
+      "birth_year": "1968",
+      "death_year": null,
+      "image_url": "https://example.com/images/ajmi.jpg",
+      "recitation_style": "مرتل"
+    }
+  ],
+  "notes": {
+    "ar": "هذا الملف يحتوي على معلومات القراء العشرة الأوائل كمثال. يرجى إضافة بيانات باقي القراء الـ 40.",
+    "en": "This file contains metadata for the first 10 reciters as an example. Please add the remaining 40 reciters' data.",
+    "usage": "This metadata will be merged with the embeddings database to provide full reciter profiles in the app."
+  }
+}
