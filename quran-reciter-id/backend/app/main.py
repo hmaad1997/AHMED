@@ -173,14 +173,15 @@ async def identify_reciter(audio_file: UploadFile = File(...)):
         analysis_path = _prepare_audio(tmp_path, audio_file.filename or "")
         if analysis_path != tmp_path:
             extracted_path = analysis_path
-        if not ai_engine.validate_audio_duration(analysis_path, min_duration_sec=3.0):
-            raise HTTPException(400, "الملف قصير جداً — يجب أن يكون 3 ثوانٍ على الأقل")
+        if not ai_engine.validate_audio_duration(analysis_path, min_duration_sec=8.0):
+            raise HTTPException(400, "الملف قصير جداً — التحليل العميق يحتاج 8 ثوانٍ على الأقل (ويُفضّل 40 ثانية)")
 
-        # Multi-segment averaging (VAD applied inside)
-        mean_emb, seg_embs = ai_engine.process_audio_segments(analysis_path)
+        # ═══ التحليل العميق: 40 ثانية × 8 مقاطع ═══
+        # VAD → قص 40 ثانية من الوسط → 8 بصمات × 5 ثوانٍ → متوسط + تصويت
+        mean_emb, seg_embs, analyzed_sec = ai_engine.process_audio_segments(analysis_path)
         q = mean_emb.reshape(1, -1)
 
-        # Global ranking (averaged embedding)
+        # المرحلة 1: ترتيب عام بالبصمة المتوسطة
         scored = sorted(
             ((n, float(cosine_similarity(q, v.reshape(1, -1))[0][0])) for n, v in vecs.items()),
             key=lambda x: x[1], reverse=True
@@ -189,20 +190,31 @@ async def identify_reciter(audio_file: UploadFile = File(...)):
         second_sim = scored[1][1] if len(scored) > 1 else 0.0
         margin = max(0.0, sim - second_sim)
 
-        # Per-segment voting for spoof/inconsistency detection
-        seg_top_names = []
+        # المرحلة 2: تصويت لكل مقطع (كشف انتحال/عدم تناسق)
+        seg_top_names, seg_top_scores = [], []
         for e in seg_embs:
             eq = e.reshape(1, -1)
-            best = max(vecs.items(), key=lambda kv: cosine_similarity(eq, kv[1].reshape(1, -1))[0][0])
-            seg_top_names.append(best[0])
+            best_n, best_s = None, -1.0
+            for n_, v_ in vecs.items():
+                sc = float(cosine_similarity(eq, v_.reshape(1, -1))[0][0])
+                if sc > best_s:
+                    best_s, best_n = sc, n_
+            seg_top_names.append(best_n); seg_top_scores.append(best_s)
         agreement = seg_top_names.count(name) / max(1, len(seg_top_names))
+        seg_mean_score = sum(seg_top_scores) / max(1, len(seg_top_scores))
 
-        confidence = max(0.0, min(1.0, (sim - 0.35) / 0.55)) *                      (0.6 + min(margin / 0.15, 1.0) * 0.2 + agreement * 0.2)
+        # المرحلة 3: تحقّق مضاعف — يجب أن يجتاز جميع الشروط
+        confidence = max(0.0, min(1.0, (sim - 0.35) / 0.55)) * \
+                     (0.5 + min(margin / 0.15, 1.0) * 0.2 + agreement * 0.3)
 
-        MIN_SIM = 0.55
-        MIN_MARGIN = 0.03
-        MIN_AGREEMENT = 0.5  # at least half of segments must agree
-        is_unknown = sim < MIN_SIM or margin < MIN_MARGIN or agreement < MIN_AGREEMENT
+        MIN_SIM = 0.58          # ↑ من 0.55
+        MIN_MARGIN = 0.04       # ↑ من 0.03
+        MIN_AGREEMENT = 0.6     # ↑ من 0.5 — على الأقل 5/8 مقاطع تتفق
+        MIN_SEG_MEAN = 0.50     # متوسط أعلى مقطع لكل شريحة
+        is_unknown = (
+            sim < MIN_SIM or margin < MIN_MARGIN or
+            agreement < MIN_AGREEMENT or seg_mean_score < MIN_SEG_MEAN
+        )
         top_matches = [
             {"name": n, "similarity": round(s, 4), "confidence": round(max(0.0, min(1.0, (s - 0.35) / 0.55)), 3)}
             for n, s in scored[:5]
@@ -237,6 +249,8 @@ async def identify_reciter(audio_file: UploadFile = File(...)):
                 "top3": [{"name": n, "score": s} for n, s in scored[:3]],
                 "segments": len(seg_embs),
                 "agreement": round(agreement, 2),
+                "analyzed_sec": round(analyzed_sec, 1),
+                "margin": round(margin, 3),
             })
         return result
     finally:
