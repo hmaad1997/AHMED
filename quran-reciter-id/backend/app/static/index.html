@@ -1,436 +1,125 @@
-<!doctype html>
-<html lang="ar" dir="rtl">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Quran Reciter ID — التعرّف على القارئ</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&family=Amiri:wght@700&display=swap" rel="stylesheet">
+<!doctype html><html lang="ar" dir="rtl"><head>
+<meta charset="utf-8"><title>من القارئ</title>
+<link rel="icon" href="/static/logo.jpg">
+<link href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
-:root{
-  --bg:#0b1220; --bg2:#0f172a; --panel:#111a2e; --panel2:#152037;
-  --border:#1f2b47; --text:#e6ecf7; --muted:#8ea0c2;
-  --gold:#d4af37; --gold2:#f0d78c; --accent:#38bdf8; --ok:#10b981; --err:#ef4444;
-}
-*{box-sizing:border-box}
-body{margin:0;font-family:'Tajawal',system-ui,sans-serif;background:
-  radial-gradient(1200px 600px at 80% -10%, #1a2648 0%, transparent 60%),
-  radial-gradient(900px 500px at 0% 100%, #0b1f3a 0%, transparent 60%),
-  var(--bg);color:var(--text);min-height:100vh}
-.wrap{max-width:1100px;margin:0 auto;padding:24px}
-header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px}
-.brand{display:flex;align-items:center;gap:14px}
-.logo{width:52px;height:52px;border-radius:14px;background:linear-gradient(135deg,var(--gold),var(--gold2));
-  display:grid;place-items:center;color:#1a1204;font-weight:900;font-size:24px;font-family:'Amiri',serif;
-  box-shadow:0 8px 30px -8px rgba(212,175,55,.55)}
-h1{font-size:22px;margin:0;font-weight:900;letter-spacing:.3px}
-.sub{color:var(--muted);font-size:13px;margin-top:2px}
-.status{font-size:12px;color:var(--muted);display:flex;gap:8px;align-items:center}
-.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
-.dot.ok{background:var(--ok);box-shadow:0 0 12px var(--ok)}
-.dot.err{background:var(--err)}
-
-.tabs{display:flex;gap:6px;background:var(--panel);border:1px solid var(--border);
-  padding:6px;border-radius:14px;margin-bottom:18px;overflow-x:auto}
-.tab{flex:1;min-width:140px;padding:12px 14px;border:0;background:transparent;color:var(--muted);
-  border-radius:10px;cursor:pointer;font-family:inherit;font-weight:700;font-size:14px;transition:.2s}
-.tab:hover{color:var(--text)}
-.tab.active{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#1a1204;
-  box-shadow:0 6px 20px -6px rgba(212,175,55,.5)}
-
-.card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border);
-  border-radius:18px;padding:22px;margin-bottom:16px;box-shadow:0 20px 60px -30px rgba(0,0,0,.6)}
-.card h2{margin:0 0 6px;font-size:18px;font-weight:900}
-.card p.hint{color:var(--muted);margin:0 0 16px;font-size:13.5px}
-
-.drop{border:2px dashed var(--border);border-radius:14px;padding:26px;text-align:center;
-  background:#0c1428;cursor:pointer;transition:.2s}
-.drop:hover,.drop.drag{border-color:var(--gold);background:#0f1a34}
-.drop b{color:var(--gold2)}
-.drop small{display:block;color:var(--muted);margin-top:6px}
-
-.row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
-button.act,label.act{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#1a1204;
-  border:0;padding:12px 20px;border-radius:12px;font-weight:900;cursor:pointer;font-family:inherit;
-  font-size:14px;box-shadow:0 8px 24px -10px rgba(212,175,55,.6)}
-button.act:disabled{opacity:.5;cursor:not-allowed}
-button.ghost{background:transparent;color:var(--text);border:1px solid var(--border);
-  padding:12px 18px;border-radius:12px;font-weight:700;cursor:pointer;font-family:inherit}
-button.danger{background:#3a1414;color:#ffb4b4;border:1px solid #5a1e1e}
-
-input[type=text],textarea{width:100%;background:#0c1428;border:1px solid var(--border);
-  border-radius:12px;padding:12px 14px;color:var(--text);font-family:inherit;font-size:14px;outline:none}
-input:focus,textarea:focus{border-color:var(--gold)}
-label.field{display:block;margin-bottom:12px}
-label.field span{display:block;color:var(--muted);font-size:12px;margin-bottom:6px}
-
-.result{margin-top:18px;padding:20px;border-radius:14px;background:
-  linear-gradient(135deg,rgba(212,175,55,.12),rgba(56,189,248,.08));
-  border:1px solid rgba(212,175,55,.35)}
-.result .name{font-family:'Amiri',serif;font-size:30px;color:var(--gold2);margin:0}
-.result .en{color:var(--muted);margin:4px 0 10px}
-.meter{height:10px;background:#0c1428;border-radius:99px;overflow:hidden;margin-top:10px;border:1px solid var(--border)}
-.meter>i{display:block;height:100%;background:linear-gradient(90deg,var(--gold),var(--gold2))}
-.meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-top:14px}
-.meta div{background:#0c1428;border:1px solid var(--border);border-radius:10px;padding:10px 12px}
-.meta b{display:block;font-size:11px;color:var(--muted);font-weight:700;margin-bottom:4px}
-
-.list{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
-.rec{background:#0c1428;border:1px solid var(--border);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:8px}
-.rec .n{font-family:'Amiri',serif;font-size:20px;color:var(--gold2)}
-.rec .c{font-size:12px;color:var(--muted)}
-.badge{display:inline-block;padding:2px 8px;border-radius:99px;background:rgba(56,189,248,.15);
-  color:var(--accent);font-size:11px;font-weight:700}
-.badge.user{background:rgba(212,175,55,.15);color:var(--gold2)}
-
-.files{margin-top:10px;display:flex;flex-direction:column;gap:6px}
-.files div{background:#0c1428;border:1px solid var(--border);padding:8px 12px;border-radius:10px;font-size:13px;display:flex;justify-content:space-between}
-
-.hist{max-height:420px;overflow:auto}
-.hist .h{display:flex;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px}
-.hist .h:last-child{border-bottom:0}
-.hist .h b{color:var(--gold2);font-family:'Amiri',serif;font-size:16px}
-
-.toast{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#0c1428;
-  border:1px solid var(--border);padding:12px 18px;border-radius:12px;color:var(--text);
-  box-shadow:0 20px 40px -10px rgba(0,0,0,.6);opacity:0;transition:.3s;z-index:99}
-.toast.show{opacity:1}
-.toast.ok{border-color:var(--ok)} .toast.err{border-color:var(--err)}
-.spin{display:inline-block;width:14px;height:14px;border:2px solid transparent;border-top-color:currentColor;
-  border-radius:50%;animation:s 1s linear infinite;vertical-align:middle;margin-inline-start:8px}
+:root{--bg:#021a19;--bg2:#042f2e;--card:#083c39;--border:#d9b35c26;--gold:#d9b35c;--gold2:#f0d78c;--fg:#eef4ea;--mut:#a9b8b6;--ok:#3ecf8e;--err:#f2545b}
+*{box-sizing:border-box}html,body{margin:0;background:radial-gradient(1200px 800px at 80% -20%,#0f5349 0,var(--bg) 70%);color:var(--fg);font-family:'IBM Plex Sans Arabic',system-ui,sans-serif;min-height:100vh}
+.wrap{max-width:1180px;margin:0 auto;padding:22px 28px 60px}
+header{display:flex;gap:18px;align-items:center;padding:16px 22px;background:linear-gradient(135deg,#04302e,#083c39);border:1px solid var(--border);border-radius:22px;box-shadow:0 12px 40px #0006}
+.logo{width:72px;height:72px;border-radius:50%;object-fit:cover;box-shadow:0 0 0 2px var(--gold),0 0 24px #d9b35c55;background:#000}
+h1{font-family:Amiri,serif;margin:0;font-size:34px;color:var(--gold2);letter-spacing:.5px}
+.sub{color:var(--mut);font-size:14px;margin-top:2px}
+.spacer{flex:1}
+.status{display:flex;gap:6px;align-items:center;font-size:12px;color:var(--mut)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--mut)}
+.dot.ok{background:var(--ok);box-shadow:0 0 10px var(--ok)}
+.tabs{display:flex;gap:6px;margin:22px 0;flex-wrap:wrap}
+.tab{padding:10px 20px;border-radius:14px;border:1px solid var(--border);background:#04302e80;color:var(--mut);cursor:pointer;font-family:inherit;font-size:14px;font-weight:500;transition:.2s}
+.tab:hover{color:var(--fg)}
+.tab.active{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#0a1f1e;border-color:var(--gold)}
+.panel{display:none;background:linear-gradient(180deg,#083c39,#052b29);border:1px solid var(--border);border-radius:22px;padding:26px;box-shadow:0 10px 40px #0008}
+.panel.active{display:block}
+.drop{border:2px dashed #d9b35c55;border-radius:18px;padding:44px 20px;text-align:center;cursor:pointer;transition:.2s;background:#0000001f}
+.drop:hover,.drop.hover{border-color:var(--gold);background:#d9b35c14}
+.drop h3{margin:0 0 6px;color:var(--gold2);font-family:Amiri,serif;font-size:24px}
+.drop p{margin:4px 0;color:var(--mut);font-size:13px}
+input[type=file]{display:none}
+.btn{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#0a1f1e;border:0;padding:12px 26px;border-radius:12px;font-weight:700;font-family:inherit;cursor:pointer;font-size:15px;transition:.2s}
+.btn:hover{filter:brightness(1.08);transform:translateY(-1px)}
+.btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.btn.ghost{background:transparent;color:var(--gold2);border:1px solid var(--gold)}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+input[type=text],textarea{width:100%;padding:11px 14px;background:#02201f;border:1px solid var(--border);border-radius:12px;color:var(--fg);font-family:inherit;font-size:14px}
+input[type=text]:focus,textarea:focus{outline:none;border-color:var(--gold)}
+label{display:block;color:var(--mut);font-size:13px;margin:10px 0 6px}
+.files{margin-top:12px;display:flex;flex-direction:column;gap:6px}
+.files>div{background:#02201f;border:1px solid var(--border);padding:8px 14px;border-radius:10px;font-size:13px;display:flex;justify-content:space-between;color:var(--mut)}
+.result{margin-top:22px;padding:22px;border-radius:18px;background:linear-gradient(135deg,#0f5349,#083c39);border:1px solid var(--gold);display:none}
+.result.show{display:block}
+.result.unknown{background:linear-gradient(135deg,#3a1f1f,#2a1414);border-color:var(--err)}
+.rname{font-family:Amiri,serif;font-size:32px;color:var(--gold2);margin:0}
+.reng{color:var(--mut);font-size:14px;margin:2px 0 14px}
+.meter{height:8px;background:#02201f;border-radius:99px;overflow:hidden;margin:8px 0 12px}
+.meter>span{display:block;height:100%;background:linear-gradient(90deg,var(--gold),var(--gold2));transition:width .6s}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.chip{padding:6px 12px;background:#02201fcc;border:1px solid var(--border);border-radius:99px;font-size:12px;color:var(--mut)}
+.list{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-top:16px}
+.card{background:#02201f;border:1px solid var(--border);padding:14px;border-radius:14px}
+.card b{color:var(--gold2);font-family:Amiri,serif;font-size:18px;display:block;margin-bottom:4px}
+.card small{color:var(--mut);font-size:12px}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#083c39;border:1px solid var(--gold);color:var(--fg);padding:12px 20px;border-radius:12px;box-shadow:0 8px 30px #000a;z-index:99;display:none}
+.toast.show{display:block}
+.spin{display:inline-block;width:18px;height:18px;border:2px solid #ffffff33;border-top-color:var(--gold2);border-radius:50%;animation:s 1s linear infinite;vertical-align:middle;margin-inline-end:8px}
 @keyframes s{to{transform:rotate(360deg)}}
-.hide{display:none!important}
-.path{font-family:ui-monospace,monospace;font-size:11px;color:var(--muted);word-break:break-all;background:#0c1428;padding:8px 10px;border-radius:8px;border:1px solid var(--border);margin-top:8px}
-</style>
-</head>
-<body>
-<div class="wrap">
+.mic{display:inline-flex;align-items:center;gap:8px}
+.mic.rec .btn{background:linear-gradient(135deg,#f2545b,#f28088);color:#fff;animation:pulse 1.2s infinite}
+@keyframes pulse{50%{filter:brightness(1.15)}}
+</style></head><body><div class="wrap">
 <header>
-  <div class="brand">
-    <div class="logo">ق</div>
-    <div>
-      <h1>Quran Reciter ID</h1>
-      <div class="sub">التعرّف على القارئ بالذكاء الاصطناعي • نسخة 2.0</div>
-    </div>
-  </div>
-  <div class="status"><span class="dot" id="dot"></span><span id="stat">جارٍ الاتصال…</span></div>
+  <img class="logo" src="/static/logo.jpg" alt="من القارئ">
+  <div><h1>من القارئ؟</h1><div class="sub">تطبيق التعرّف على قرّاء القرآن الكريم بالبصمة الصوتية</div></div>
+  <div class="spacer"></div>
+  <div class="status"><span class="dot" id="dot"></span><span id="stTxt">جارٍ الاتصال…</span></div>
 </header>
 
 <div class="tabs">
-  <button class="tab active" data-tab="id">🎤 تعرّف على قارئ</button>
-  <button class="tab" data-tab="add">➕ إضافة قارئ جديد</button>
-  <button class="tab" data-tab="list">📚 قائمة القرّاء</button>
-  <button class="tab" data-tab="hist">🕐 السجلّ</button>
+  <button class="tab active" data-t="id">🎙️ تعرّف على القارئ</button>
+  <button class="tab" data-t="add">➕ إضافة قارئ</button>
+  <button class="tab" data-t="lib">📚 المكتبة</button>
+  <button class="tab" data-t="hist">🕒 السجل</button>
 </div>
 
-<!-- IDENTIFY -->
-<section id="tab-id" class="card">
-  <h2>ارفع تلاوة للتعرّف على القارئ</h2>
-  <p class="hint">ملف صوتي أو <b>فيديو</b> (WAV/MP3/M4A/MP4/MKV…) لا يقلّ عن 3 ثوانٍ. من الفيديو يُستخرج أول 40 ثانية من الصوت تلقائياً. النموذج يقارنها بكل القرّاء في قاعدة البيانات (المدمجة + التي أضفتها).</p>
-  <div class="drop" id="dropId">
-    <div>اسحب وأفلت الملف هنا أو <b>اضغط للاختيار</b></div>
-    <small id="idName">لم يُختَر ملف</small>
-    <input type="file" id="fileId" accept="audio/*,video/*" hidden>
-  </div>
+<section class="panel active" id="p-id">
+  <div class="drop" id="dropId"><h3>اسحب ملف الصوت هنا</h3><p>أو اضغط للاختيار — MP3 / WAV / M4A / MP4 (10 ث على الأقل)</p><p id="fname" style="color:var(--gold2);margin-top:8px"></p></div>
+  <input type="file" id="fileId" accept="audio/*,video/*">
   <div class="row">
-    <button class="act" id="btnId" disabled>تعرّف الآن</button>
-    <button class="ghost" id="btnMic" title="سجّل من الميكروفون أو من صوت السمّاعة">🎙️ استمع مباشرة</button>
-    <span id="micTimer" style="color:var(--muted);font-size:13px;align-self:center"></span>
+    <button class="btn" id="btnId" disabled>🔍 حلّل البصمة الصوتية</button>
+    <div class="mic" id="micWrap"><button class="btn ghost" id="btnMic">🎤 استماع مباشر (10 ث)</button></div>
   </div>
-  <p class="hint" style="margin-top:10px">💡 زر «استمع مباشرة» يسجّل من الميكروفون. لتحليل صوت مشغّل داخل الجهاز، شغّل خيار «Stereo Mix» أو اختر «Share tab audio» في متصفح المعاينة.</p>
-  <div id="idResult"></div>
+  <div class="result" id="res"></div>
 </section>
 
-<!-- ADD -->
-<section id="tab-add" class="card hide">
-  <h2>أضف قارئاً جديداً بصوته</h2>
-  <p class="hint">اسم القارئ + عيّنة صوتية أو أكثر (كلما زادت العيّنات، زادت الدقة). يُحفظ محلياً على جهازك ويتذكّره التطبيق للتعرّف مستقبلاً.</p>
-  <label class="field"><span>اسم القارئ *</span><input type="text" id="rName" placeholder="مثال: عبد الرحمن السديس"></label>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-    <label class="field"><span>الدولة</span><input type="text" id="rCountry" placeholder="السعودية"></label>
-    <label class="field"><span>سنة الميلاد</span><input type="text" id="rYear" placeholder="1960"></label>
+<section class="panel" id="p-add">
+  <div class="grid2">
+    <div><label>اسم القارئ *</label><input type="text" id="rName" placeholder="مثال: عبد الباسط عبد الصمد"></div>
+    <div><label>الدولة</label><input type="text" id="rCountry" placeholder="مصر"></div>
   </div>
-  <label class="field"><span>نبذة</span><textarea id="rBio" rows="2" placeholder="نبذة قصيرة"></textarea></label>
-  <div class="drop" id="dropAdd">
-    <div>اسحب عيّنات صوتية أو فيديو هنا أو <b>اضغط للاختيار</b> (يمكن اختيار عدة ملفات)</div>
-    <small>الأفضل: 3-5 عيّنات، كل واحدة 10 ثوانٍ فأكثر</small>
-    <input type="file" id="fileAdd" accept="audio/*,video/*" multiple hidden>
-  </div>
-  <div id="addFiles" class="files"></div>
-  <div class="row">
-    <button class="act" id="btnAdd" disabled>حفظ القارئ</button>
-    <button class="ghost" id="btnClear">مسح</button>
-  </div>
-  <div class="path" id="dataPath"></div>
+  <label>نبذة</label><textarea id="rBio" rows="2"></textarea>
+  <label>ملفات صوتية للتدريب (2 أو أكثر مفضّل)</label>
+  <div class="drop" id="dropAdd"><h3>اسحب الملفات هنا</h3><p>أو اضغط للاختيار</p></div>
+  <input type="file" id="fileAdd" accept="audio/*" multiple>
+  <div class="files" id="addFiles"></div>
+  <div class="row"><button class="btn" id="btnAdd" disabled>💾 حفظ القارئ</button></div>
 </section>
 
-<!-- LIST -->
-<section id="tab-list" class="card hide">
-  <h2>القرّاء في القاعدة</h2>
-  <p class="hint">القرّاء المضافون من قِبلك يظهرون بشارة ذهبية ويمكن حذفهم.</p>
-  <div id="listBox" class="list"></div>
-</section>
+<section class="panel" id="p-lib"><div class="row"><button class="btn ghost" onclick="loadLib()">🔄 تحديث</button><span id="libCnt" style="color:var(--mut)"></span></div><div class="list" id="lib"></div></section>
+<section class="panel" id="p-hist"><div class="row"><button class="btn ghost" onclick="loadHist()">🔄 تحديث</button></div><div class="list" id="hist"></div></section>
 
-<!-- HISTORY -->
-<section id="tab-hist" class="card hide">
-  <h2>سجلّ عمليات التعرّف</h2>
-  <p class="hint">آخر النتائج التي أعطاها التطبيق — تُحفظ محلياً.</p>
-  <div id="histBox" class="hist"></div>
-</section>
-
-</div>
-<div class="toast" id="toast"></div>
-
+</div><div class="toast" id="toast"></div>
 <script>
-const $ = s => document.querySelector(s);
-const api = (p, o) => fetch(p, o).then(async r => { const j = await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.detail||j.error||('HTTP '+r.status)); return j; });
-const toast = (m, t='ok') => { const el=$('#toast'); el.className='toast show '+t; el.textContent=m; setTimeout(()=>el.classList.remove('show'),3200); };
-
-// Tabs
-document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{
-  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
-  b.classList.add('active');
-  ['id','add','list','hist'].forEach(t=>$('#tab-'+t).classList.toggle('hide', t!==b.dataset.tab));
-  if(b.dataset.tab==='list') loadList();
-  if(b.dataset.tab==='hist') loadHist();
-});
-
-// Health + background model loading
-let modelReady = false;
-async function refreshHealth(){
-  try{
-    const h = await api('/health');
-    modelReady = !!h.ai;
-    $('#dot').classList.toggle('ok', modelReady);
-    $('#dot').classList.toggle('err', h.ai_status === 'error');
-    const total = (h.builtin_reciters||0) + (h.user_reciters||0);
-    if(modelReady){
-      $('#stat').textContent = `جاهز • ${total} قارئ`;
-    } else if(h.ai_status === 'error'){
-      $('#stat').textContent = 'تعذر تحميل نموذج التعرف';
-    } else {
-      $('#stat').textContent = `تحميل نموذج التعرف بالخلفية… • ${total} قارئ`;
-    }
-    $('#dataPath').textContent = '📁 مكان الحفظ: ' + (h.data_path || '');
-    updateBtn();
-    if(!modelReady && h.ai_status !== 'error') setTimeout(refreshHealth, 2500);
-  }catch(e){
-    $('#dot').classList.add('err'); $('#stat').textContent='خطأ اتصال';
-    setTimeout(refreshHealth, 2500);
-  }
-}
-refreshHealth();
-
-// Drag helpers
-function wireDrop(dropEl, inputEl, onFiles){
-  dropEl.onclick = () => inputEl.click();
-  ['dragover','dragenter'].forEach(ev=>dropEl.addEventListener(ev, e=>{e.preventDefault();dropEl.classList.add('drag')}));
-  ['dragleave','drop'].forEach(ev=>dropEl.addEventListener(ev, e=>{e.preventDefault();dropEl.classList.remove('drag')}));
-  dropEl.addEventListener('drop', e=>onFiles(e.dataTransfer.files));
-  inputEl.addEventListener('change', e=>onFiles(e.target.files));
-}
-
-// Identify
-let idFile = null;
-wireDrop($('#dropId'), $('#fileId'), files=>{
-  idFile = files[0]||null;
-  $('#idName').textContent = idFile ? idFile.name : 'لم يُختَر ملف';
-  $('#btnId').disabled = !idFile || !modelReady;
-});
-
-async function runIdentify(fileOrBlob, displayName){
-  $('#btnId').disabled = true; $('#btnMic').disabled = true;
-  $('#btnId').innerHTML = 'جارٍ التحليل…<span class="spin"></span>';
-  $('#idResult').innerHTML = '';
-  try{
-    const fd = new FormData();
-    fd.append('audio_file', fileOrBlob, displayName || (fileOrBlob.name || 'live.wav'));
-    const r = await api('/identify-reciter', {method:'POST', body:fd});
-    const pct = Math.round(r.confidence*100);
-    const topHtml = (r.top_matches||[]).slice(0,3).map((m,i)=>`
-      <div style="display:flex;justify-content:space-between;padding:8px 10px;border-bottom:1px solid var(--border)">
-        <span>${i+1}. ${m.name}</span>
-        <span style="color:var(--muted)">sim ${m.similarity} · ${Math.round((m.confidence||0)*100)}%</span>
-      </div>`).join('');
-    if(r.is_unknown){
-      $('#idResult').innerHTML = `
-        <div class="result" style="border-color:rgba(239,68,68,.45);background:linear-gradient(135deg,rgba(239,68,68,.10),rgba(56,189,248,.05))">
-          <p class="name" style="color:#ffb4b4">غير معروف</p>
-          <div class="en">Unknown reciter — low confidence</div>
-          <div>أعلى تشابه: <b>${r.similarity_score.toFixed(3)}</b> (أقل من الحد الآمن)</div>
-          <div class="meter"><i style="width:${pct}%;background:linear-gradient(90deg,#ef4444,#f59e0b)"></i></div>
-          <p style="color:var(--muted);margin-top:12px">${r.bio}</p>
-          ${topHtml?`<div style="margin-top:12px"><b style="color:var(--muted);font-size:12px">أقرب الاحتمالات (غير مؤكدة):</b>${topHtml}</div>`:''}
-        </div>`;
-      toast('لم يتم التعرّف بثقة كافية','err');
-    } else {
-      $('#idResult').innerHTML = `
-        <div class="result">
-          <p class="name">${r.reciter_name}</p>
-          <div class="en">${r.reciter_name_english||''}</div>
-          <div>نسبة الثقة: <b>${pct}%</b></div>
-          <div class="meter"><i style="width:${pct}%"></i></div>
-          <div class="meta">
-            <div><b>الدولة</b>${r.country||'-'}</div>
-            <div><b>سنة الميلاد</b>${r.birth_year||'-'}</div>
-            <div><b>نمط التلاوة</b>${r.recitation_style||'-'}</div>
-            <div><b>Similarity</b>${r.similarity_score.toFixed(4)}</div>
-          </div>
-          ${r.bio?`<p style="color:var(--muted);margin-top:12px">${r.bio}</p>`:''}
-          ${topHtml?`<details style="margin-top:12px"><summary style="cursor:pointer;color:var(--muted);font-size:12px">أقرب ${Math.min(3,(r.top_matches||[]).length)} مرشحين</summary>${topHtml}</details>`:''}
-        </div>`;
-      toast('تم التعرّف بنجاح');
-    }
-  }catch(e){ toast(e.message,'err'); }
-  finally{ $('#btnId').disabled=!idFile||!modelReady; $('#btnMic').disabled=false; $('#btnId').textContent='تعرّف الآن'; }
-}
-$('#btnId').onclick = () => idFile && runIdentify(idFile);
-
-// ===== Microphone / live capture =====
-// Records PCM via Web Audio, encodes 16 kHz mono WAV, then sends to /identify-reciter.
-let micState = null; // {ctx, stream, node, source, chunks, startedAt, timer}
-function encodeWav(chunks, sampleRate){
-  // Concatenate Float32 chunks
-  let len = 0; chunks.forEach(c=>len+=c.length);
-  const flat = new Float32Array(len); let off=0;
-  chunks.forEach(c=>{ flat.set(c, off); off+=c.length; });
-  // Downsample to 16000
-  const target = 16000;
-  const ratio = sampleRate / target;
-  const outLen = Math.floor(flat.length / ratio);
-  const out = new Float32Array(outLen);
-  for(let i=0;i<outLen;i++){
-    const start = Math.floor(i*ratio), end = Math.floor((i+1)*ratio);
-    let sum=0, n=0;
-    for(let j=start;j<end && j<flat.length;j++){ sum+=flat[j]; n++; }
-    out[i] = n ? sum/n : 0;
-  }
-  // 16-bit PCM WAV
-  const buf = new ArrayBuffer(44 + out.length*2);
-  const v = new DataView(buf);
-  const w = (o,s)=>{ for(let i=0;i<s.length;i++) v.setUint8(o+i, s.charCodeAt(i)); };
-  w(0,'RIFF'); v.setUint32(4, 36+out.length*2, true); w(8,'WAVE');
-  w(12,'fmt '); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
-  v.setUint32(24,target,true); v.setUint32(28,target*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
-  w(36,'data'); v.setUint32(40, out.length*2, true);
-  let p = 44;
-  for(let i=0;i<out.length;i++){
-    const s = Math.max(-1, Math.min(1, out[i]));
-    v.setInt16(p, s<0 ? s*0x8000 : s*0x7FFF, true); p+=2;
-  }
-  return new Blob([buf], {type:'audio/wav'});
-}
-
-async function startMic(){
-  if(!modelReady){ toast('انتظر تحميل النموذج','err'); return; }
-  try{
-    // Try to prefer any audio source (some Chromium builds allow tab/system audio via getDisplayMedia)
-    const stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false, noiseSuppression:false, autoGainControl:false}});
-    const ctx = new (window.AudioContext||window.webkitAudioContext)();
-    const source = ctx.createMediaStreamSource(stream);
-    const node = ctx.createScriptProcessor(4096, 1, 1);
-    const chunks = [];
-    node.onaudioprocess = e => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
-    source.connect(node); node.connect(ctx.destination);
-    micState = {ctx, stream, node, source, chunks, startedAt: Date.now(), timer:null};
-    $('#btnMic').textContent = '⏹ إيقاف وتحليل';
-    $('#btnMic').classList.remove('ghost');
-    $('#btnMic').style.background = 'linear-gradient(135deg,#ef4444,#f59e0b)';
-    $('#btnMic').style.color = '#fff';
-    micState.timer = setInterval(()=>{
-      const s = Math.floor((Date.now()-micState.startedAt)/1000);
-      $('#micTimer').textContent = `⏺ يسجّل… ${s}ث`;
-      if(s >= 30) stopMic(); // hard cap 30s
-    }, 250);
-  }catch(err){
-    toast(err.name==='NotAllowedError' ? 'رفض الوصول للميكروفون' : ('خطأ: '+err.message), 'err');
-  }
-}
-
-async function stopMic(){
-  if(!micState) return;
-  const {ctx, stream, node, source, chunks, startedAt, timer} = micState;
-  clearInterval(timer);
-  const duration = (Date.now()-startedAt)/1000;
-  micState = null;
-  try{ node.disconnect(); source.disconnect(); }catch(_){}
-  stream.getTracks().forEach(t=>t.stop());
-  const sr = ctx.sampleRate;
-  await ctx.close();
-  $('#btnMic').textContent = '🎙️ استمع مباشرة';
-  $('#btnMic').classList.add('ghost');
-  $('#btnMic').style.background = ''; $('#btnMic').style.color = '';
-  $('#micTimer').textContent = '';
-  if(duration < 3){ toast('التسجيل قصير جداً — 3 ثوانٍ على الأقل','err'); return; }
-  const blob = encodeWav(chunks, sr);
-  if(blob.size < 4096){ toast('لم يُلتقط صوت — تحقّق من الميكروفون','err'); return; }
-  await runIdentify(blob, `live-${Date.now()}.wav`);
-}
-
-$('#btnMic').onclick = () => micState ? stopMic() : startMic();
-
+const $=q=>document.querySelector(q);
+const toast=(m,ok=true)=>{const t=$('#toast');t.textContent=m;t.style.borderColor=ok?'var(--gold)':'var(--err)';t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3200)};
+const api=(p,o)=>fetch(p,o).then(async r=>{const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||j.error||('HTTP '+r.status));return j});
+document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab,.panel').forEach(x=>x.classList.remove('active'));b.classList.add('active');$('#p-'+b.dataset.t).classList.add('active');if(b.dataset.t==='lib')loadLib();if(b.dataset.t==='hist')loadHist()});
+function wire(drop,inp,cb){drop.onclick=()=>inp.click();['dragover','dragenter'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('hover')}));['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('hover')}));drop.addEventListener('drop',e=>cb(e.dataTransfer.files));inp.addEventListener('change',e=>cb(e.target.files))}
+let idFile=null;
+wire($('#dropId'),$('#fileId'),f=>{idFile=f[0]||null;$('#fname').textContent=idFile?('📄 '+idFile.name):'';$('#btnId').disabled=!idFile});
+async function doId(blob,name){const fd=new FormData();fd.append('audio_file',blob,name||blob.name||'a.wav');const res=$('#res');res.className='result show';res.innerHTML='<div><span class="spin"></span>جارٍ التحليل العميق (قد يستغرق ~40 ثانية)…</div>';try{const r=await api('/identify-reciter',{method:'POST',body:fd});renderRes(r)}catch(e){res.className='result show unknown';res.innerHTML='<p style="color:var(--err)">❌ '+e.message+'</p>'}}
+$('#btnId').onclick=()=>idFile&&doId(idFile);
+function renderRes(r){const res=$('#res');const pct=Math.round((r.confidence||0)*100);res.className='result show'+(r.is_unknown?' unknown':'');res.innerHTML=r.is_unknown?`<h2 class="rname" style="color:var(--err)">قارئ غير معروف</h2><p class="reng">لم نتمكن من مطابقة هذا الصوت مع قاعدة البيانات</p><div class="meter"><span style="width:${pct}%"></span></div><p style="color:var(--mut);font-size:13px">أعلى تشابه: ${pct}%</p>`:`<h2 class="rname">${r.reciter_name}</h2><p class="reng">${r.reciter_name_english||''}</p><div class="meter"><span style="width:${pct}%"></span></div><p style="color:var(--gold2);font-weight:600">الثقة: ${pct}% • تشابه: ${(r.similarity_score||0).toFixed(3)}</p><div class="chips">${r.country?'<span class="chip">🌍 '+r.country+'</span>':''}${r.recitation_style?'<span class="chip">🎼 '+r.recitation_style+'</span>':''}${r.birth_year?'<span class="chip">🗓 '+r.birth_year+(r.death_year?' — '+r.death_year:'')+'</span>':''}</div>${r.bio?'<p style="margin-top:14px;color:var(--fg);line-height:1.9">'+r.bio+'</p>':''}`}
+// Live listen
+let rec=null,chunks=[];
+$('#btnMic').onclick=async()=>{const w=$('#micWrap'),b=$('#btnMic');if(rec){rec.stop();return}try{const s=await navigator.mediaDevices.getUserMedia({audio:true});rec=new MediaRecorder(s);chunks=[];rec.ondataavailable=e=>chunks.push(e.data);rec.onstop=()=>{const blob=new Blob(chunks,{type:'audio/webm'});s.getTracks().forEach(t=>t.stop());w.classList.remove('rec');b.textContent='🎤 استماع مباشر (10 ث)';rec=null;doId(blob,'live.webm')};rec.start();w.classList.add('rec');b.textContent='⏹ إيقاف التسجيل';setTimeout(()=>rec&&rec.state==='recording'&&rec.stop(),10000)}catch(e){toast('لا يمكن الوصول للميكروفون',false)}};
 // Add reciter
-let addFiles = [];
-function renderAdd(){
-  $('#addFiles').innerHTML = addFiles.map((f,i)=>`<div>${f.name} <button class="ghost" style="padding:2px 10px" data-i="${i}">×</button></div>`).join('');
-  $('#addFiles').querySelectorAll('button').forEach(b=>b.onclick=()=>{ addFiles.splice(+b.dataset.i,1); renderAdd(); updateBtn(); });
-}
-function updateBtn(){ $('#btnAdd').disabled = !(modelReady && $('#rName').value.trim() && addFiles.length); }
-wireDrop($('#dropAdd'), $('#fileAdd'), files=>{ addFiles.push(...Array.from(files)); renderAdd(); updateBtn(); });
-$('#rName').oninput = updateBtn;
-$('#btnClear').onclick = ()=>{ $('#rName').value=$('#rCountry').value=$('#rYear').value=$('#rBio').value=''; addFiles=[]; renderAdd(); updateBtn(); };
-$('#btnAdd').onclick = async ()=>{
-  $('#btnAdd').disabled = true; $('#btnAdd').innerHTML='جارٍ الحفظ (استخراج البصمة الصوتية)…<span class="spin"></span>';
-  try{
-    const fd = new FormData();
-    fd.append('name', $('#rName').value.trim());
-    fd.append('country', $('#rCountry').value.trim());
-    fd.append('bio', $('#rBio').value.trim());
-    addFiles.forEach(f=>fd.append('audio_files', f));
-    const r = await api('/reciters/add', {method:'POST', body:fd});
-    toast(r.message);
-    $('#btnClear').click();
-  }catch(e){ toast(e.message,'err'); }
-  finally{ $('#btnAdd').disabled=false; $('#btnAdd').textContent='حفظ القارئ'; updateBtn(); }
-};
-
-// List
-async function loadList(){
-  $('#listBox').innerHTML = 'جارٍ التحميل…';
-  try{
-    const r = await api('/list-reciters');
-    $('#listBox').innerHTML = r.reciters.map(x=>{
-      const isUser = x.country === 'مخصّص' || x.recitation_style === 'مخصّص';
-      return `<div class="rec">
-        <div class="n">${x.name}</div>
-        <div class="c">${x.name_english||''}</div>
-        <div class="c">${x.country} • ${x.recitation_style}</div>
-        <div style="margin-top:auto">${isUser?`<span class="badge user">مضاف</span> <button class="ghost danger" style="float:left;padding:6px 12px" data-name="${x.name}">حذف</button>`:'<span class="badge">مدمج</span>'}</div>
-      </div>`;
-    }).join('') || '<div style="color:var(--muted)">لا يوجد قرّاء بعد — أضف واحداً من التبويب الثاني.</div>';
-    $('#listBox').querySelectorAll('button[data-name]').forEach(b=>b.onclick=async()=>{
-      if(!confirm(`حذف «${b.dataset.name}»؟`)) return;
-      try{ await api('/reciters/'+encodeURIComponent(b.dataset.name),{method:'DELETE'}); toast('تم الحذف'); loadList(); }
-      catch(e){ toast(e.message,'err'); }
-    });
-  }catch(e){ $('#listBox').innerHTML = '<div style="color:var(--err)">'+e.message+'</div>'; }
-}
-
-// History
-async function loadHist(){
-  $('#histBox').innerHTML = 'جارٍ التحميل…';
-  try{
-    const r = await api('/history');
-    $('#histBox').innerHTML = r.items.map(h=>`
-      <div class="h">
-        <div><b>${h.reciter}</b><div style="color:var(--muted);font-size:11px">${h.filename||''}</div></div>
-        <div style="text-align:left"><div>${Math.round(h.confidence*100)}%</div>
-        <div style="color:var(--muted);font-size:11px">${new Date(h.ts*1000).toLocaleString('ar')}</div></div>
-      </div>`).join('') || '<div style="color:var(--muted);padding:20px;text-align:center">لا يوجد سجلّ بعد.</div>';
-  }catch(e){ $('#histBox').innerHTML = '<div style="color:var(--err)">'+e.message+'</div>'; }
-}
-</script>
-</body>
-</html>
-
+let addFiles=[];
+const renderAdd=()=>{$('#addFiles').innerHTML=addFiles.map((f,i)=>`<div><span>📄 ${f.name}</span><span style="cursor:pointer;color:var(--err)" onclick="rmAdd(${i})">✕</span></div>`).join('');$('#btnAdd').disabled=!($('#rName').value.trim()&&addFiles.length)};
+window.rmAdd=i=>{addFiles.splice(i,1);renderAdd()};
+wire($('#dropAdd'),$('#fileAdd'),f=>{addFiles.push(...Array.from(f));renderAdd()});
+$('#rName').oninput=renderAdd;
+$('#btnAdd').onclick=async()=>{const b=$('#btnAdd');b.disabled=true;b.innerHTML='<span class="spin"></span>حفظ…';try{const fd=new FormData();fd.append('name',$('#rName').value.trim());fd.append('country',$('#rCountry').value.trim());fd.append('bio',$('#rBio').value.trim());addFiles.forEach(f=>fd.append('audio_files',f));const r=await api('/reciters/add',{method:'POST',body:fd});toast('✅ تم حفظ القارئ ('+r.embeddings_added+' بصمة)');addFiles=[];$('#rName').value=$('#rCountry').value=$('#rBio').value='';renderAdd()}catch(e){toast(e.message,false)}b.innerHTML='💾 حفظ القارئ';renderAdd()};
+async function loadLib(){const el=$('#lib');el.innerHTML='<p style="color:var(--mut)">جارٍ التحميل…</p>';try{const r=await api('/list-reciters');$('#libCnt').textContent='• '+r.total_reciters+' قارئ';el.innerHTML=r.reciters.map(x=>`<div class="card"><b>${x.name}</b><small>${x.name_english||''}</small><small style="display:block;margin-top:6px">🌍 ${x.country||'—'} • 🎼 ${x.recitation_style||'—'}</small></div>`).join('')||'<p style="color:var(--mut)">لا يوجد قرّاء بعد</p>'}catch(e){el.innerHTML='<p style="color:var(--err)">'+e.message+'</p>'}}
+async function loadHist(){const el=$('#hist');el.innerHTML='<p style="color:var(--mut)">جارٍ التحميل…</p>';try{const r=await api('/history');const items=r.history||r.items||r;el.innerHTML=(Array.isArray(items)?items:[]).map(x=>`<div class="card"><b>${x.reciter_name||'—'}</b><small>${x.timestamp||x.date||''}</small><small style="display:block;margin-top:6px">ثقة: ${Math.round((x.confidence||0)*100)}%</small></div>`).join('')||'<p style="color:var(--mut)">لا يوجد سجل</p>'}catch(e){el.innerHTML='<p style="color:var(--err)">'+e.message+'</p>'}}
+async function poll(){try{const r=await api('/model-status');if(r.ready||r.status==='ready'){$('#dot').classList.add('ok');$('#stTxt').textContent='النموذج جاهز'}else{$('#stTxt').textContent='تحميل النموذج… '+(r.progress||'');setTimeout(poll,2000)}}catch{setTimeout(poll,2500)}}poll();
+</script></body></html>
