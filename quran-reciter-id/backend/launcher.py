@@ -1,9 +1,9 @@
 import os,sys,time,threading,traceback,faulthandler,webbrowser,urllib.request
 from pathlib import Path
 A=Path(os.environ.get("APPDATA") or Path.home())/"QuranReciterID";A.mkdir(parents=True,exist_ok=True)
-L=A/"launcher.log"
+L=Path(os.environ.get("QRI_LOG_FILE") or (A/"launcher.log"))
 try:
-    _f=open(L,"a",buffering=1,encoding="utf-8");sys.stdout=_f;sys.stderr=_f
+    L.parent.mkdir(parents=True,exist_ok=True);_f=open(L,"a",buffering=1,encoding="utf-8");sys.stdout=_f;sys.stderr=_f
 except Exception:
     _f=None
 faulthandler.enable(file=_f or sys.__stderr__)
