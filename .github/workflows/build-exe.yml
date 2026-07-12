@@ -51,6 +51,15 @@ jobs:
           YT_CLIP_SECONDS: '60'
           QURAN_EXCEL: 'data/reciters.xlsx'
         run: python scripts/enrich_from_youtube.py
+      - name: Upload YouTube enrichment report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-enrichment-report
+          path: |
+            quran-reciter-id/backend/data/youtube_enrichment_report.json
+            quran-reciter-id/backend/data/youtube_enrichment_report.csv
+          if-no-files-found: warn
       - name: Ensure data folder exists
         run: if (!(Test-Path data)) { New-Item -ItemType Directory -Path data | Out-Null }
       - name: Build EXE
