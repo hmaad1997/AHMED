@@ -2,6 +2,7 @@
 AI Engine for Voice Recognition using SpeechBrain
 """
 
+import sys, os
 import torch
 import torchaudio
 import numpy as np
@@ -11,6 +12,17 @@ import logging
 import tempfile
 
 logger = logging.getLogger(__name__)
+
+
+def _model_dir() -> Path:
+    """Return absolute path to bundled SpeechBrain model (works in PyInstaller EXE and dev)."""
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+    d = base / "pretrained_models" / "spkrec-ecapa-voxceleb"
+    if not d.exists():
+        # fallback: writable cache in user home so first-run download still works
+        d = Path.home() / ".quran_reciter_id" / "spkrec-ecapa-voxceleb"
+        d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 class VoiceRecognitionEngine:
@@ -23,7 +35,7 @@ class VoiceRecognitionEngine:
         try:
             self.encoder = EncoderClassifier.from_hparams(
                 source="speechbrain/spkrec-ecapa-voxceleb",
-                savedir="pretrained_models/spkrec-ecapa-voxceleb"
+                savedir=str(_model_dir())
             )
             logger.info("✓ Model loaded successfully")
         except Exception as e:
