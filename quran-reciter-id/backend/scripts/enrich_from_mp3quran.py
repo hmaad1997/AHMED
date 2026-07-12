@@ -24,7 +24,7 @@ from difflib import SequenceMatcher
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data"
-DB_PATH = DATA_DIR / "reciter_database.json"
+DB_PATH = DATA_DIR / "embeddings" / "reciter_database.json"
 NAMES_PATH = DATA_DIR / "arabic_names.json"
 
 MP3QURAN_API = "https://mp3quran.net/api/v3/reciters?language=ar"
