@@ -48,7 +48,7 @@ jobs:
             --collect-all app `
             --collect-all speechbrain --collect-all librosa `
             --collect-all faiss --collect-data sklearn `
-            --collect-all webview --collect-all uvicorn `
+            --collect-all webview --collect-all uvicorn --collect-all imageio_ffmpeg `
             launcher.py
       - uses: actions/upload-artifact@v4
         with:
