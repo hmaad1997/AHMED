@@ -193,12 +193,31 @@ document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{
   if(b.dataset.tab==='hist') loadHist();
 });
 
-// Health
-api('/health').then(h=>{
-  $('#dot').classList.add('ok');
-  $('#stat').textContent = `جاهز • ${h.builtin_reciters + h.user_reciters} قارئ`;
-  $('#dataPath').textContent = '📁 مكان الحفظ: ' + h.data_path;
-}).catch(e=>{ $('#dot').classList.add('err'); $('#stat').textContent='خطأ اتصال'; });
+// Health + background model loading
+let modelReady = false;
+async function refreshHealth(){
+  try{
+    const h = await api('/health');
+    modelReady = !!h.ai;
+    $('#dot').classList.toggle('ok', modelReady);
+    $('#dot').classList.toggle('err', h.ai_status === 'error');
+    const total = (h.builtin_reciters||0) + (h.user_reciters||0);
+    if(modelReady){
+      $('#stat').textContent = `جاهز • ${total} قارئ`;
+    } else if(h.ai_status === 'error'){
+      $('#stat').textContent = 'تعذر تحميل نموذج التعرف';
+    } else {
+      $('#stat').textContent = `تحميل نموذج التعرف بالخلفية… • ${total} قارئ`;
+    }
+    $('#dataPath').textContent = '📁 مكان الحفظ: ' + (h.data_path || '');
+    updateBtn();
+    if(!modelReady && h.ai_status !== 'error') setTimeout(refreshHealth, 2500);
+  }catch(e){
+    $('#dot').classList.add('err'); $('#stat').textContent='خطأ اتصال';
+    setTimeout(refreshHealth, 2500);
+  }
+}
+refreshHealth();
 
 // Drag helpers
 function wireDrop(dropEl, inputEl, onFiles){
@@ -214,10 +233,10 @@ let idFile = null;
 wireDrop($('#dropId'), $('#fileId'), files=>{
   idFile = files[0]||null;
   $('#idName').textContent = idFile ? idFile.name : 'لم يُختَر ملف';
-  $('#btnId').disabled = !idFile;
+  $('#btnId').disabled = !idFile || !modelReady;
 });
 $('#btnId').onclick = async () => {
-  if(!idFile) return;
+  if(!idFile || !modelReady) return;
   $('#btnId').disabled = true; $('#btnId').innerHTML = 'جارٍ التعرّف…<span class="spin"></span>';
   $('#idResult').innerHTML = '';
   try{
@@ -249,7 +268,7 @@ function renderAdd(){
   $('#addFiles').innerHTML = addFiles.map((f,i)=>`<div>${f.name} <button class="ghost" style="padding:2px 10px" data-i="${i}">×</button></div>`).join('');
   $('#addFiles').querySelectorAll('button').forEach(b=>b.onclick=()=>{ addFiles.splice(+b.dataset.i,1); renderAdd(); updateBtn(); });
 }
-function updateBtn(){ $('#btnAdd').disabled = !($('#rName').value.trim() && addFiles.length); }
+function updateBtn(){ $('#btnAdd').disabled = !(modelReady && $('#rName').value.trim() && addFiles.length); }
 wireDrop($('#dropAdd'), $('#fileAdd'), files=>{ addFiles.push(...Array.from(files)); renderAdd(); updateBtn(); });
 $('#rName').oninput = updateBtn;
 $('#btnClear').onclick = ()=>{ $('#rName').value=$('#rCountry').value=$('#rYear').value=$('#rBio').value=''; addFiles=[]; renderAdd(); updateBtn(); };
