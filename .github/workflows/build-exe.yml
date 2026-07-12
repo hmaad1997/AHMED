@@ -21,13 +21,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install --index-url https://download.pytorch.org/whl/cpu torch==2.1.0 torchaudio==2.1.0
           pip install -r requirements.txt
-          pip install pyinstaller pywebview
-      - name: Pre-download SpeechBrain model (bundle inside EXE)
+          pip install pyinstaller pywebview openpyxl requests
+      - name: Pre-download SpeechBrain model
         run: |
           python -c "from speechbrain.pretrained import EncoderClassifier; EncoderClassifier.from_hparams(source='speechbrain/spkrec-ecapa-voxceleb', savedir='pretrained_models/spkrec-ecapa-voxceleb')"
-      - name: Build pretrained reciter database (364 famous reciters)
-        run: |
-          python scripts/build_pretrained_db.py
+      - name: Build pretrained reciter database (364 reciters)
+        run: python scripts/build_pretrained_db.py
+      - name: Enrich DB from open-source samples (mp3quran.net)
+        continue-on-error: true
+        run: python scripts/enrich_from_mp3quran.py
       - name: Ensure data folder exists
         run: |
           if (!(Test-Path data)) { New-Item -ItemType Directory -Path data | Out-Null }
