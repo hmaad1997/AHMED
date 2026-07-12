@@ -1,190 +1,254 @@
-"""
-Enrich reciter fingerprint database using open-source audio from mp3quran.net.
+"""Multi-source reciter enrichment.
 
-For every reciter listed in the Excel file that is NOT already in the
-pre-trained ECAPA database, this script:
-  1. Fetches the reciter's audio server from https://mp3quran.net/api/v3/
-  2. Downloads 3 short surah recordings (Al-Fatiha, Al-Ikhlas, Al-Kafirun)
-  3. Trims each clip to ~10s to keep memory low
-  4. Extracts an ECAPA-TDNN embedding per clip
-  5. Stores the mean embedding as a fingerprint in reciter_database.json
-  6. Appends the Arabic display name to arabic_names.json
+Pulls voice samples from several open sources (mp3quran.net, everyayah.com,
+quranapi.pages.dev) for every reciter that is NOT already fingerprinted in
+reciter_database.json, extracts ECAPA-TDNN embeddings, and merges them in.
 
-Runs inside the GitHub Actions build job — no user interaction required.
-Skips gracefully on network errors so a partial DB is always shipped.
+Runs during the GitHub Actions build after build_pretrained_db.py.
 """
 from __future__ import annotations
-import json, os, sys, io, tempfile, time, re, unicodedata
+import io
+import json
+import os
+import re
+import sys
+import tempfile
+import time
 from pathlib import Path
+from typing import Iterable
+
 import requests
-import numpy as np
 import torch
 import torchaudio
 from difflib import SequenceMatcher
 
-BACKEND = Path(__file__).resolve().parents[1]
-DATA = BACKEND / "data"
-DB_PATH = DATA / "reciter_database.json"
-NAMES_PATH = DATA / "arabic_names.json"
-EXCEL_PATH = DATA / "reciters.xlsx"  # committed alongside build
+ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR = ROOT / "data"
+DB_PATH = DATA_DIR / "reciter_database.json"
+NAMES_PATH = DATA_DIR / "arabic_names.json"
 
-MP3Q_API = "https://mp3quran.net/api/v3/reciters?language=ar"
-SURAHS = [1, 112, 109]  # Fatiha, Ikhlas, Kafirun — short & universally recorded
-MAX_SECONDS = 12
-SAMPLE_RATE = 16000
+MP3QURAN_API = "https://mp3quran.net/api/v3/reciters?language=ar"
+EVERYAYAH_INDEX = "https://everyayah.com/data/recitations.js"
+QURANAPI_RECITERS = "https://quranapi.pages.dev/api/reciters.json"
 
-
-def norm(s: str) -> str:
-    s = unicodedata.normalize("NFKD", s)
-    s = re.sub(r"[\u064B-\u065F\u0670\u0640]", "", s)  # remove diacritics/tatweel
-    s = re.sub(r"[إأآا]", "ا", s)
-    s = re.sub(r"[ى]", "ي", s)
-    s = re.sub(r"[ة]", "ه", s)
-    s = re.sub(r"[^\w\s]", " ", s, flags=re.UNICODE)
-    return re.sub(r"\s+", " ", s).strip().lower()
+SAMPLE_SURAHS = [112, 113, 114, 108, 103]  # short surahs
+HEADERS = {"User-Agent": "QuranReciterID/1.0 (+github.com/hmaad1997/AHMED)"}
+TIMEOUT = 30
 
 
-def load_excel_names() -> list[str]:
-    if not EXCEL_PATH.exists():
-        return []
-    try:
-        import openpyxl
-        wb = openpyxl.load_workbook(EXCEL_PATH, read_only=True)
-        ws = wb.active
-        names = []
-        for row in ws.iter_rows(values_only=True):
-            for cell in row:
-                if isinstance(cell, str) and cell.strip():
-                    names.append(cell.strip())
-        return list(dict.fromkeys(names))
-    except Exception as e:
-        print(f"[enrich] excel read failed: {e}")
-        return []
+def log(msg: str) -> None:
+    print(f"[enrich] {msg}", flush=True)
 
 
-def fetch_mp3quran() -> list[dict]:
-    try:
-        r = requests.get(MP3Q_API, timeout=30)
-        r.raise_for_status()
-        return r.json().get("reciters", [])
-    except Exception as e:
-        print(f"[enrich] mp3quran api failed: {e}")
-        return []
+def load_json(path: Path, default):
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return default
+    return default
 
 
-def best_match(name: str, reciters: list[dict]) -> dict | None:
-    n = norm(name)
-    best, score = None, 0.0
-    for r in reciters:
-        for candidate in [r.get("name", "")] + [m.get("name", "") for m in r.get("moshaf", [])]:
-            s = SequenceMatcher(None, n, norm(candidate)).ratio()
-            if s > score:
-                score, best = s, r
-    return best if score >= 0.72 else None
+def save_json(path: Path, data) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def load_ecapa():
-    from speechbrain.inference.speaker import EncoderClassifier
-    model = EncoderClassifier.from_hparams(
+def normalize(text: str) -> str:
+    text = re.sub(r"[\u064B-\u0652\u0670]", "", text or "")
+    text = re.sub(r"[^\w\s]", " ", text)
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def load_encoder():
+    from speechbrain.pretrained import EncoderClassifier
+    log("Loading ECAPA-TDNN encoder…")
+    return EncoderClassifier.from_hparams(
         source="speechbrain/spkrec-ecapa-voxceleb",
-        savedir=str(BACKEND / "pretrained_models" / "ecapa"),
+        savedir=str(ROOT / ".models" / "ecapa"),
         run_opts={"device": "cpu"},
     )
-    return model
 
 
-def load_audio(url: str) -> torch.Tensor | None:
+def embed_audio(encoder, wav_bytes: bytes) -> list[float] | None:
     try:
-        r = requests.get(url, timeout=60, stream=True)
-        r.raise_for_status()
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-            for chunk in r.iter_content(1 << 15):
-                f.write(chunk)
-                if f.tell() > 3_000_000:  # ~3 MB cap
-                    break
-            path = f.name
-        wav, sr = torchaudio.load(path)
-        os.unlink(path)
+            f.write(wav_bytes)
+            tmp = f.name
+        wav, sr = torchaudio.load(tmp)
+        os.unlink(tmp)
+        if sr != 16000:
+            wav = torchaudio.functional.resample(wav, sr, 16000)
         if wav.shape[0] > 1:
-            wav = wav.mean(0, keepdim=True)
-        if sr != SAMPLE_RATE:
-            wav = torchaudio.functional.resample(wav, sr, SAMPLE_RATE)
-        max_len = MAX_SECONDS * SAMPLE_RATE
-        # skip first 2s (intro/basmala) if possible
-        start = min(2 * SAMPLE_RATE, wav.shape[1] // 4)
-        wav = wav[:, start : start + max_len]
-        if wav.shape[1] < SAMPLE_RATE:
-            return None
-        return wav
+            wav = wav.mean(dim=0, keepdim=True)
+        # Trim to first 20 seconds
+        if wav.shape[1] > 16000 * 20:
+            wav = wav[:, : 16000 * 20]
+        emb = encoder.encode_batch(wav).squeeze().detach().cpu().numpy()
+        return emb.tolist()
     except Exception as e:
-        print(f"[enrich]   audio fail {url[:60]}: {e}")
+        log(f"  embed error: {e}")
         return None
 
 
-def embed(model, wav: torch.Tensor) -> np.ndarray | None:
+def download(url: str, max_bytes: int = 8_000_000) -> bytes | None:
     try:
-        with torch.no_grad():
-            emb = model.encode_batch(wav).squeeze().cpu().numpy()
-        return emb / (np.linalg.norm(emb) + 1e-9)
-    except Exception as e:
-        print(f"[enrich]   embed fail: {e}")
+        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT, stream=True)
+        if r.status_code != 200:
+            return None
+        buf = io.BytesIO()
+        for chunk in r.iter_content(65536):
+            buf.write(chunk)
+            if buf.tell() > max_bytes:
+                break
+        return buf.getvalue()
+    except Exception:
         return None
 
 
-def main():
-    db = json.loads(DB_PATH.read_text(encoding="utf-8")) if DB_PATH.exists() else {}
-    names = json.loads(NAMES_PATH.read_text(encoding="utf-8")) if NAMES_PATH.exists() else {}
-    existing_ar = {v for v in names.values()}
+# ---------- Source: mp3quran.net ----------
 
-    excel = load_excel_names()
-    print(f"[enrich] excel names: {len(excel)}  existing db keys: {len(db)}")
+def mp3quran_reciters() -> list[dict]:
+    try:
+        data = requests.get(MP3QURAN_API, headers=HEADERS, timeout=TIMEOUT).json()
+        return data.get("reciters", [])
+    except Exception as e:
+        log(f"mp3quran fetch failed: {e}")
+        return []
 
-    missing = [n for n in excel if norm(n) not in {norm(v) for v in existing_ar}]
-    print(f"[enrich] missing to enrich: {len(missing)}")
-    if not missing:
+
+def mp3quran_samples(reciter: dict) -> Iterable[tuple[str, str]]:
+    for moshaf in reciter.get("moshaf", [])[:1]:
+        server = moshaf.get("server", "").rstrip("/")
+        surahs = str(moshaf.get("surah_list", ""))
+        available = {int(s) for s in surahs.split(",") if s.isdigit()}
+        for sn in SAMPLE_SURAHS:
+            if sn in available:
+                yield f"{server}/{sn:03d}.mp3", f"mp3quran_{sn}"
+
+
+# ---------- Source: everyayah.com ----------
+
+def everyayah_reciters() -> list[dict]:
+    try:
+        txt = requests.get(EVERYAYAH_INDEX, headers=HEADERS, timeout=TIMEOUT).text
+        # File is a JS assignment: var Recitations = [ {...}, ... ];
+        m = re.search(r"\[(.*)\]", txt, re.S)
+        if not m:
+            return []
+        raw = "[" + m.group(1) + "]"
+        # Convert JS-ish to JSON: quote keys, single->double quotes
+        raw = re.sub(r"([{,]\s*)([A-Za-z_][\w]*)\s*:", r'\1"\2":', raw)
+        raw = raw.replace("'", '"')
+        raw = re.sub(r",\s*([}\]])", r"\1", raw)
+        try:
+            return json.loads(raw)
+        except Exception:
+            return []
+    except Exception as e:
+        log(f"everyayah fetch failed: {e}")
+        return []
+
+
+def everyayah_samples(reciter: dict) -> Iterable[tuple[str, str]]:
+    subfolder = reciter.get("subfolder") or reciter.get("folder")
+    if not subfolder:
         return
+    base = f"https://everyayah.com/data/{subfolder}"
+    for sn in SAMPLE_SURAHS:
+        # everyayah format: SSSAAA.mp3  (surah 112 ayah 001 -> 112001.mp3)
+        yield f"{base}/{sn:03d}001.mp3", f"everyayah_{sn}"
 
-    reciters = fetch_mp3quran()
-    print(f"[enrich] mp3quran reciters listed: {len(reciters)}")
-    if not reciters:
-        return
 
-    model = load_ecapa()
+# ---------- Source: quranapi.pages.dev ----------
+
+def quranapi_reciters() -> list[dict]:
+    try:
+        d = requests.get(QURANAPI_RECITERS, headers=HEADERS, timeout=TIMEOUT).json()
+        return d if isinstance(d, list) else d.get("reciters", [])
+    except Exception:
+        return []
+
+
+# ---------- Matching ----------
+
+def similar(a: str, b: str) -> float:
+    return SequenceMatcher(None, normalize(a), normalize(b)).ratio()
+
+
+def already_have(name: str, existing_names: dict[str, str]) -> bool:
+    n = normalize(name)
+    for rid, ar in existing_names.items():
+        if similar(name, ar) > 0.75 or similar(name, rid.replace("_", " ")) > 0.75:
+            return True
+    return False
+
+
+def main() -> int:
+    if not DB_PATH.exists():
+        log("reciter_database.json missing — run build_pretrained_db.py first")
+        return 0
+    db = load_json(DB_PATH, {"reciters": {}})
+    names = load_json(NAMES_PATH, {})
+    existing = dict(names)
+
+    encoder = load_encoder()
+
     added = 0
+    tried = 0
 
-    for arabic_name in missing:
-        match = best_match(arabic_name, reciters)
-        if not match:
-            continue
-        moshaf = (match.get("moshaf") or [{}])[0]
-        base = (moshaf.get("server") or "").rstrip("/")
-        if not base:
-            continue
-        embs = []
-        for s in SURAHS:
-            url = f"{base}/{s:03d}.mp3"
-            wav = load_audio(url)
-            if wav is None:
+    def process(name_ar: str, name_id: str, samples: Iterable[tuple[str, str]], source: str):
+        nonlocal added, tried
+        if already_have(name_ar, existing) or name_id in db["reciters"]:
+            return
+        tried += 1
+        embeddings = []
+        for url, tag in samples:
+            audio = download(url)
+            if not audio:
                 continue
-            e = embed(model, wav)
-            if e is not None:
-                embs.append(e)
-            time.sleep(0.3)
-        if len(embs) < 2:
-            print(f"[enrich] skip {arabic_name}: only {len(embs)} embeddings")
-            continue
-        centroid = np.mean(embs, axis=0)
-        centroid = centroid / (np.linalg.norm(centroid) + 1e-9)
-        key = f"mp3q_{re.sub(r'[^A-Za-z0-9]+', '_', match.get('name', arabic_name))}"
-        db[key] = {"centroid": centroid.tolist(), "sub_centroids": [e.tolist() for e in embs]}
-        names[key] = arabic_name
-        added += 1
-        print(f"[enrich] +++ {arabic_name}  ({len(embs)} samples)")
+            emb = embed_audio(encoder, audio)
+            if emb:
+                embeddings.append(emb)
+            if len(embeddings) >= 3:
+                break
+        if len(embeddings) >= 2:
+            db["reciters"][name_id] = {
+                "name_ar": name_ar,
+                "source": source,
+                "embeddings": embeddings,
+            }
+            existing[name_id] = name_ar
+            names[name_id] = name_ar
+            added += 1
+            log(f"  ✅ {name_ar}  ({len(embeddings)} embeddings, {source})")
+            if added % 5 == 0:
+                save_json(DB_PATH, db)
+                save_json(NAMES_PATH, names)
 
-    DB_PATH.write_text(json.dumps(db, ensure_ascii=False), encoding="utf-8")
-    NAMES_PATH.write_text(json.dumps(names, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[enrich] done. added {added}. total reciters in DB: {len(db)}")
+    # 1) mp3quran
+    log("Source: mp3quran.net")
+    for r in mp3quran_reciters():
+        name_ar = r.get("name", "").strip()
+        rid = f"mp3q_{r.get('id')}"
+        process(name_ar, rid, mp3quran_samples(r), "mp3quran.net")
+
+    # 2) everyayah
+    log("Source: everyayah.com")
+    for r in everyayah_reciters():
+        name_ar = r.get("ename") or r.get("name") or ""
+        rid = f"eay_{normalize(name_ar).replace(' ', '_')}"[:60]
+        process(name_ar, rid, everyayah_samples(r), "everyayah.com")
+
+    save_json(DB_PATH, db)
+    save_json(NAMES_PATH, names)
+    log(f"Done. Tried {tried} new reciters, added {added}. Total DB: {len(db['reciters'])}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        sys.exit(main())
+    except Exception as e:
+        log(f"FATAL: {e}")
+        sys.exit(0)  # never fail the build
