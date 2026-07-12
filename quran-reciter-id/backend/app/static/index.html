@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Quran Reciter ID — التعرّف على القارئ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&family=Amiri:wght@700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0b1220; --bg2:#0f172a; --panel:#111a2e; --panel2:#152037;
+  --border:#1f2b47; --text:#e6ecf7; --muted:#8ea0c2;
+  --gold:#d4af37; --gold2:#f0d78c; --accent:#38bdf8; --ok:#10b981; --err:#ef4444;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:'Tajawal',system-ui,sans-serif;background:
+  radial-gradient(1200px 600px at 80% -10%, #1a2648 0%, transparent 60%),
+  radial-gradient(900px 500px at 0% 100%, #0b1f3a 0%, transparent 60%),
+  var(--bg);color:var(--text);min-height:100vh}
+.wrap{max-width:1100px;margin:0 auto;padding:24px}
+header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px}
+.brand{display:flex;align-items:center;gap:14px}
+.logo{width:52px;height:52px;border-radius:14px;background:linear-gradient(135deg,var(--gold),var(--gold2));
+  display:grid;place-items:center;color:#1a1204;font-weight:900;font-size:24px;font-family:'Amiri',serif;
+  box-shadow:0 8px 30px -8px rgba(212,175,55,.55)}
+h1{font-size:22px;margin:0;font-weight:900;letter-spacing:.3px}
+.sub{color:var(--muted);font-size:13px;margin-top:2px}
+.status{font-size:12px;color:var(--muted);display:flex;gap:8px;align-items:center}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.dot.ok{background:var(--ok);box-shadow:0 0 12px var(--ok)}
+.dot.err{background:var(--err)}
+
+.tabs{display:flex;gap:6px;background:var(--panel);border:1px solid var(--border);
+  padding:6px;border-radius:14px;margin-bottom:18px;overflow-x:auto}
+.tab{flex:1;min-width:140px;padding:12px 14px;border:0;background:transparent;color:var(--muted);
+  border-radius:10px;cursor:pointer;font-family:inherit;font-weight:700;font-size:14px;transition:.2s}
+.tab:hover{color:var(--text)}
+.tab.active{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#1a1204;
+  box-shadow:0 6px 20px -6px rgba(212,175,55,.5)}
+
+.card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border);
+  border-radius:18px;padding:22px;margin-bottom:16px;box-shadow:0 20px 60px -30px rgba(0,0,0,.6)}
+.card h2{margin:0 0 6px;font-size:18px;font-weight:900}
+.card p.hint{color:var(--muted);margin:0 0 16px;font-size:13.5px}
+
+.drop{border:2px dashed var(--border);border-radius:14px;padding:26px;text-align:center;
+  background:#0c1428;cursor:pointer;transition:.2s}
+.drop:hover,.drop.drag{border-color:var(--gold);background:#0f1a34}
+.drop b{color:var(--gold2)}
+.drop small{display:block;color:var(--muted);margin-top:6px}
+
+.row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+button.act,label.act{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#1a1204;
+  border:0;padding:12px 20px;border-radius:12px;font-weight:900;cursor:pointer;font-family:inherit;
+  font-size:14px;box-shadow:0 8px 24px -10px rgba(212,175,55,.6)}
+button.act:disabled{opacity:.5;cursor:not-allowed}
+button.ghost{background:transparent;color:var(--text);border:1px solid var(--border);
+  padding:12px 18px;border-radius:12px;font-weight:700;cursor:pointer;font-family:inherit}
+button.danger{background:#3a1414;color:#ffb4b4;border:1px solid #5a1e1e}
+
+input[type=text],textarea{width:100%;background:#0c1428;border:1px solid var(--border);
+  border-radius:12px;padding:12px 14px;color:var(--text);font-family:inherit;font-size:14px;outline:none}
+input:focus,textarea:focus{border-color:var(--gold)}
+label.field{display:block;margin-bottom:12px}
+label.field span{display:block;color:var(--muted);font-size:12px;margin-bottom:6px}
+
+.result{margin-top:18px;padding:20px;border-radius:14px;background:
+  linear-gradient(135deg,rgba(212,175,55,.12),rgba(56,189,248,.08));
+  border:1px solid rgba(212,175,55,.35)}
+.result .name{font-family:'Amiri',serif;font-size:30px;color:var(--gold2);margin:0}
+.result .en{color:var(--muted);margin:4px 0 10px}
+.meter{height:10px;background:#0c1428;border-radius:99px;overflow:hidden;margin-top:10px;border:1px solid var(--border)}
+.meter>i{display:block;height:100%;background:linear-gradient(90deg,var(--gold),var(--gold2))}
+.meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-top:14px}
+.meta div{background:#0c1428;border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+.meta b{display:block;font-size:11px;color:var(--muted);font-weight:700;margin-bottom:4px}
+
+.list{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.rec{background:#0c1428;border:1px solid var(--border);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:8px}
+.rec .n{font-family:'Amiri',serif;font-size:20px;color:var(--gold2)}
+.rec .c{font-size:12px;color:var(--muted)}
+.badge{display:inline-block;padding:2px 8px;border-radius:99px;background:rgba(56,189,248,.15);
+  color:var(--accent);font-size:11px;font-weight:700}
+.badge.user{background:rgba(212,175,55,.15);color:var(--gold2)}
+
+.files{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.files div{background:#0c1428;border:1px solid var(--border);padding:8px 12px;border-radius:10px;font-size:13px;display:flex;justify-content:space-between}
+
+.hist{max-height:420px;overflow:auto}
+.hist .h{display:flex;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px}
+.hist .h:last-child{border-bottom:0}
+.hist .h b{color:var(--gold2);font-family:'Amiri',serif;font-size:16px}
+
+.toast{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#0c1428;
+  border:1px solid var(--border);padding:12px 18px;border-radius:12px;color:var(--text);
+  box-shadow:0 20px 40px -10px rgba(0,0,0,.6);opacity:0;transition:.3s;z-index:99}
+.toast.show{opacity:1}
+.toast.ok{border-color:var(--ok)} .toast.err{border-color:var(--err)}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid transparent;border-top-color:currentColor;
+  border-radius:50%;animation:s 1s linear infinite;vertical-align:middle;margin-inline-start:8px}
+@keyframes s{to{transform:rotate(360deg)}}
+.hide{display:none!important}
+.path{font-family:ui-monospace,monospace;font-size:11px;color:var(--muted);word-break:break-all;background:#0c1428;padding:8px 10px;border-radius:8px;border:1px solid var(--border);margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="brand">
+    <div class="logo">ق</div>
+    <div>
+      <h1>Quran Reciter ID</h1>
+      <div class="sub">التعرّف على القارئ بالذكاء الاصطناعي • نسخة 2.0</div>
+    </div>
+  </div>
+  <div class="status"><span class="dot" id="dot"></span><span id="stat">جارٍ الاتصال…</span></div>
+</header>
+
+<div class="tabs">
+  <button class="tab active" data-tab="id">🎤 تعرّف على قارئ</button>
+  <button class="tab" data-tab="add">➕ إضافة قارئ جديد</button>
+  <button class="tab" data-tab="list">📚 قائمة القرّاء</button>
+  <button class="tab" data-tab="hist">🕐 السجلّ</button>
+</div>
+
+<!-- IDENTIFY -->
+<section id="tab-id" class="card">
+  <h2>ارفع تلاوة للتعرّف على القارئ</h2>
+  <p class="hint">ملف صوتي (WAV/MP3/M4A) لا يقلّ عن 3 ثوانٍ. النموذج يقارنها بكل القرّاء في قاعدة البيانات (المدمجة + التي أضفتها).</p>
+  <div class="drop" id="dropId">
+    <div>اسحب وأفلت الملف هنا أو <b>اضغط للاختيار</b></div>
+    <small id="idName">لم يُختَر ملف</small>
+    <input type="file" id="fileId" accept="audio/*" hidden>
+  </div>
+  <div class="row">
+    <button class="act" id="btnId" disabled>تعرّف الآن</button>
+  </div>
+  <div id="idResult"></div>
+</section>
+
+<!-- ADD -->
+<section id="tab-add" class="card hide">
+  <h2>أضف قارئاً جديداً بصوته</h2>
+  <p class="hint">اسم القارئ + عيّنة صوتية أو أكثر (كلما زادت العيّنات، زادت الدقة). يُحفظ محلياً على جهازك ويتذكّره التطبيق للتعرّف مستقبلاً.</p>
+  <label class="field"><span>اسم القارئ *</span><input type="text" id="rName" placeholder="مثال: عبد الرحمن السديس"></label>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+    <label class="field"><span>الدولة</span><input type="text" id="rCountry" placeholder="السعودية"></label>
+    <label class="field"><span>سنة الميلاد</span><input type="text" id="rYear" placeholder="1960"></label>
+  </div>
+  <label class="field"><span>نبذة</span><textarea id="rBio" rows="2" placeholder="نبذة قصيرة"></textarea></label>
+  <div class="drop" id="dropAdd">
+    <div>اسحب عيّنات صوتية هنا أو <b>اضغط للاختيار</b> (يمكن اختيار عدة ملفات)</div>
+    <small>الأفضل: 3-5 عيّنات، كل واحدة 10 ثوانٍ فأكثر</small>
+    <input type="file" id="fileAdd" accept="audio/*" multiple hidden>
+  </div>
+  <div id="addFiles" class="files"></div>
+  <div class="row">
+    <button class="act" id="btnAdd" disabled>حفظ القارئ</button>
+    <button class="ghost" id="btnClear">مسح</button>
+  </div>
+  <div class="path" id="dataPath"></div>
+</section>
+
+<!-- LIST -->
+<section id="tab-list" class="card hide">
+  <h2>القرّاء في القاعدة</h2>
+  <p class="hint">القرّاء المضافون من قِبلك يظهرون بشارة ذهبية ويمكن حذفهم.</p>
+  <div id="listBox" class="list"></div>
+</section>
+
+<!-- HISTORY -->
+<section id="tab-hist" class="card hide">
+  <h2>سجلّ عمليات التعرّف</h2>
+  <p class="hint">آخر النتائج التي أعطاها التطبيق — تُحفظ محلياً.</p>
+  <div id="histBox" class="hist"></div>
+</section>
+
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const api = (p, o) => fetch(p, o).then(async r => { const j = await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.detail||j.error||('HTTP '+r.status)); return j; });
+const toast = (m, t='ok') => { const el=$('#toast'); el.className='toast show '+t; el.textContent=m; setTimeout(()=>el.classList.remove('show'),3200); };
+
+// Tabs
+document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');
+  ['id','add','list','hist'].forEach(t=>$('#tab-'+t).classList.toggle('hide', t!==b.dataset.tab));
+  if(b.dataset.tab==='list') loadList();
+  if(b.dataset.tab==='hist') loadHist();
+});
+
+// Health
+api('/health').then(h=>{
+  $('#dot').classList.add('ok');
+  $('#stat').textContent = `جاهز • ${h.builtin_reciters + h.user_reciters} قارئ`;
+  $('#dataPath').textContent = '📁 مكان الحفظ: ' + h.data_path;
+}).catch(e=>{ $('#dot').classList.add('err'); $('#stat').textContent='خطأ اتصال'; });
+
+// Drag helpers
+function wireDrop(dropEl, inputEl, onFiles){
+  dropEl.onclick = () => inputEl.click();
+  ['dragover','dragenter'].forEach(ev=>dropEl.addEventListener(ev, e=>{e.preventDefault();dropEl.classList.add('drag')}));
+  ['dragleave','drop'].forEach(ev=>dropEl.addEventListener(ev, e=>{e.preventDefault();dropEl.classList.remove('drag')}));
+  dropEl.addEventListener('drop', e=>onFiles(e.dataTransfer.files));
+  inputEl.addEventListener('change', e=>onFiles(e.target.files));
+}
+
+// Identify
+let idFile = null;
+wireDrop($('#dropId'), $('#fileId'), files=>{
+  idFile = files[0]||null;
+  $('#idName').textContent = idFile ? idFile.name : 'لم يُختَر ملف';
+  $('#btnId').disabled = !idFile;
+});
+$('#btnId').onclick = async () => {
+  if(!idFile) return;
+  $('#btnId').disabled = true; $('#btnId').innerHTML = 'جارٍ التعرّف…<span class="spin"></span>';
+  $('#idResult').innerHTML = '';
+  try{
+    const fd = new FormData(); fd.append('audio_file', idFile);
+    const r = await api('/identify-reciter', {method:'POST', body:fd});
+    const pct = Math.round(r.confidence*100);
+    $('#idResult').innerHTML = `
+      <div class="result">
+        <p class="name">${r.reciter_name}</p>
+        <div class="en">${r.reciter_name_english||''}</div>
+        <div>نسبة الثقة: <b>${pct}%</b></div>
+        <div class="meter"><i style="width:${pct}%"></i></div>
+        <div class="meta">
+          <div><b>الدولة</b>${r.country||'-'}</div>
+          <div><b>سنة الميلاد</b>${r.birth_year||'-'}</div>
+          <div><b>نمط التلاوة</b>${r.recitation_style||'-'}</div>
+          <div><b>Similarity</b>${r.similarity_score.toFixed(4)}</div>
+        </div>
+        ${r.bio?`<p style="color:var(--muted);margin-top:12px">${r.bio}</p>`:''}
+      </div>`;
+    toast('تم التعرّف بنجاح');
+  }catch(e){ toast(e.message,'err'); }
+  finally{ $('#btnId').disabled=false; $('#btnId').textContent='تعرّف الآن'; }
+};
+
+// Add reciter
+let addFiles = [];
+function renderAdd(){
+  $('#addFiles').innerHTML = addFiles.map((f,i)=>`<div>${f.name} <button class="ghost" style="padding:2px 10px" data-i="${i}">×</button></div>`).join('');
+  $('#addFiles').querySelectorAll('button').forEach(b=>b.onclick=()=>{ addFiles.splice(+b.dataset.i,1); renderAdd(); updateBtn(); });
+}
+function updateBtn(){ $('#btnAdd').disabled = !($('#rName').value.trim() && addFiles.length); }
+wireDrop($('#dropAdd'), $('#fileAdd'), files=>{ addFiles.push(...Array.from(files)); renderAdd(); updateBtn(); });
+$('#rName').oninput = updateBtn;
+$('#btnClear').onclick = ()=>{ $('#rName').value=$('#rCountry').value=$('#rYear').value=$('#rBio').value=''; addFiles=[]; renderAdd(); updateBtn(); };
+$('#btnAdd').onclick = async ()=>{
+  $('#btnAdd').disabled = true; $('#btnAdd').innerHTML='جارٍ الحفظ (استخراج البصمة الصوتية)…<span class="spin"></span>';
+  try{
+    const fd = new FormData();
+    fd.append('name', $('#rName').value.trim());
+    fd.append('country', $('#rCountry').value.trim());
+    fd.append('bio', $('#rBio').value.trim());
+    addFiles.forEach(f=>fd.append('audio_files', f));
+    const r = await api('/reciters/add', {method:'POST', body:fd});
+    toast(r.message);
+    $('#btnClear').click();
+  }catch(e){ toast(e.message,'err'); }
+  finally{ $('#btnAdd').disabled=false; $('#btnAdd').textContent='حفظ القارئ'; updateBtn(); }
+};
+
+// List
+async function loadList(){
+  $('#listBox').innerHTML = 'جارٍ التحميل…';
+  try{
+    const r = await api('/list-reciters');
+    $('#listBox').innerHTML = r.reciters.map(x=>{
+      const isUser = x.country === 'مخصّص' || x.recitation_style === 'مخصّص';
+      return `<div class="rec">
+        <div class="n">${x.name}</div>
+        <div class="c">${x.name_english||''}</div>
+        <div class="c">${x.country} • ${x.recitation_style}</div>
+        <div style="margin-top:auto">${isUser?`<span class="badge user">مضاف</span> <button class="ghost danger" style="float:left;padding:6px 12px" data-name="${x.name}">حذف</button>`:'<span class="badge">مدمج</span>'}</div>
+      </div>`;
+    }).join('') || '<div style="color:var(--muted)">لا يوجد قرّاء بعد — أضف واحداً من التبويب الثاني.</div>';
+    $('#listBox').querySelectorAll('button[data-name]').forEach(b=>b.onclick=async()=>{
+      if(!confirm(`حذف «${b.dataset.name}»؟`)) return;
+      try{ await api('/reciters/'+encodeURIComponent(b.dataset.name),{method:'DELETE'}); toast('تم الحذف'); loadList(); }
+      catch(e){ toast(e.message,'err'); }
+    });
+  }catch(e){ $('#listBox').innerHTML = '<div style="color:var(--err)">'+e.message+'</div>'; }
+}
+
+// History
+async function loadHist(){
+  $('#histBox').innerHTML = 'جارٍ التحميل…';
+  try{
+    const r = await api('/history');
+    $('#histBox').innerHTML = r.items.map(h=>`
+      <div class="h">
+        <div><b>${h.reciter}</b><div style="color:var(--muted);font-size:11px">${h.filename||''}</div></div>
+        <div style="text-align:left"><div>${Math.round(h.confidence*100)}%</div>
+        <div style="color:var(--muted);font-size:11px">${new Date(h.ts*1000).toLocaleString('ar')}</div></div>
+      </div>`).join('') || '<div style="color:var(--muted);padding:20px;text-align:center">لا يوجد سجلّ بعد.</div>';
+  }catch(e){ $('#histBox').innerHTML = '<div style="color:var(--err)">'+e.message+'</div>'; }
+}
+</script>
+</body>
+</html>
