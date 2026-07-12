@@ -1,259 +1,201 @@
-"""
-FastAPI Backend Server for Quran Reciter ID
-"""
-
-from fastapi import FastAPI, UploadFile, File, HTTPException
+"""FastAPI Backend Server for Quran Reciter ID — with user reciters + UI."""
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pathlib import Path
-import logging
-import tempfile
-from typing import Optional
+import logging, tempfile, sys
+from typing import Optional, List
 
 from .models import IdentificationResult, ReciterListResponse, ErrorResponse, ReciterInfo
 from .ai_engine import VoiceRecognitionEngine
 from .database import ReciterDatabase
+from .user_db import UserReciterDB
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="Quran Reciter ID API",
-    description="AI-powered Quran reciter identification system",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
+app = FastAPI(title="Quran Reciter ID API", version="2.0.0")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-# CORS middleware (allow Flutter app to connect)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Global instances (loaded on startup)
 ai_engine: Optional[VoiceRecognitionEngine] = None
 database: Optional[ReciterDatabase] = None
+user_db: Optional[UserReciterDB] = None
 
-# Paths
-BASE_DIR = Path(__file__).parent.parent
-EMBEDDINGS_PATH = BASE_DIR / "data" / "embeddings" / "reciter_database.json"
-METADATA_PATH = BASE_DIR / "data" / "reciters_metadata.json"
+# Paths — support PyInstaller bundle
+_BASE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+EMBEDDINGS_PATH = _BASE / "data" / "embeddings" / "reciter_database.json"
+METADATA_PATH = _BASE / "data" / "reciters_metadata.json"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+if not STATIC_DIR.exists():
+    STATIC_DIR = _BASE / "app" / "static"
 
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize AI engine and database on server startup"""
-    global ai_engine, database
-    
-    logger.info("="*60)
-    logger.info("STARTING QURAN RECITER ID SERVER")
-    logger.info("="*60)
-    
+    global ai_engine, database, user_db
+    logger.info("=== STARTING QURAN RECITER ID SERVER ===")
+    ai_engine = VoiceRecognitionEngine()
     try:
-        # Load AI engine
-        logger.info("Initializing AI engine...")
-        ai_engine = VoiceRecognitionEngine()
-        
-        # Load database
-        logger.info("Loading reciter database...")
         database = ReciterDatabase(EMBEDDINGS_PATH, METADATA_PATH)
-        
-        # Show stats
-        stats = database.get_stats()
-        logger.info(f"✓ Database loaded: {stats['total_reciters']} reciters")
-        logger.info(f"✓ Embedding dimension: {stats['embedding_dimension']}")
-        logger.info(f"✓ Metadata available: {stats['has_metadata']}")
-        
-        logger.info("="*60)
-        logger.info("✓ SERVER READY")
-        logger.info("="*60)
-        
-    except Exception as e:
-        logger.error(f"Failed to initialize server: {str(e)}")
-        raise
+    except FileNotFoundError:
+        logger.warning("Built-in database not found — running with user reciters only")
+        database = None
+    user_db = UserReciterDB()
+    logger.info(f"✓ Data folder: {user_db.get_data_path()}")
+    logger.info("✓ SERVER READY")
+
+
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.get("/")
 async def root():
-    """Health check endpoint"""
-    return {
-        "service": "Quran Reciter ID API",
-        "status": "running",
-        "version": "1.0.0"
-    }
+    idx = STATIC_DIR / "index.html"
+    if idx.exists():
+        return FileResponse(str(idx))
+    return {"service": "Quran Reciter ID API", "status": "running"}
 
 
 @app.get("/health")
-async def health_check():
-    """Detailed health check"""
-    if ai_engine is None or database is None:
-        raise HTTPException(status_code=503, detail="Service not ready")
-    
-    stats = database.get_stats()
-    
-    return {
-        "status": "healthy",
-        "ai_engine": "loaded",
-        "database": {
-            "status": "loaded",
-            "total_reciters": stats['total_reciters'],
-            "embedding_dim": stats['embedding_dimension']
-        }
-    }
+async def health():
+    return {"status": "healthy", "ai": ai_engine is not None,
+            "builtin_reciters": len(database.reciter_vectors) if database else 0,
+            "user_reciters": len(user_db.data) if user_db else 0,
+            "data_path": user_db.get_data_path() if user_db else ""}
+
+
+def _all_vectors():
+    """Merge built-in + user embeddings."""
+    vecs = {}
+    if database:
+        vecs.update(database.reciter_vectors)
+    if user_db:
+        vecs.update(user_db.vectors())
+    return vecs
+
+
+def _get_info(name: str):
+    if user_db and name in user_db.data:
+        r = user_db.data[name]
+        return {"name": r["name"], "name_english": r.get("name_english", name),
+                "country": r.get("country", "مخصّص"), "bio": r.get("bio", ""),
+                "birth_year": r.get("birth_year", "-"), "death_year": r.get("death_year"),
+                "image_url": r.get("image_url", ""), "recitation_style": r.get("recitation_style", "مخصّص")}
+    if database:
+        return database.get_reciter_info(name)
+    return None
 
 
 @app.post("/identify-reciter", response_model=IdentificationResult)
 async def identify_reciter(audio_file: UploadFile = File(...)):
-    """
-    Identify a Quran reciter from an audio recording
-    
-    Parameters:
-    - audio_file: Audio file (WAV, MP3, etc.) with minimum 3 seconds of recitation
-    
-    Returns:
-    - Reciter information with confidence score
-    """
-    
-    if ai_engine is None or database is None:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-    
-    logger.info(f"Received identification request: {audio_file.filename}")
-    
+    if ai_engine is None:
+        raise HTTPException(503, "Service not initialized")
+    vecs = _all_vectors()
+    if not vecs:
+        raise HTTPException(400, "لا يوجد قرّاء في قاعدة البيانات — أضف قارئاً أولاً")
+
+    audio_bytes = await audio_file.read()
+    with tempfile.NamedTemporaryFile(suffix=Path(audio_file.filename or "a.wav").suffix or ".wav", delete=False) as tmp:
+        tmp.write(audio_bytes); tmp_path = Path(tmp.name)
     try:
-        # Read audio file
-        audio_bytes = await audio_file.read()
-        
-        # Save to temporary file
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
-            tmp_file.write(audio_bytes)
-            tmp_path = Path(tmp_file.name)
-        
-        # Validate audio duration
         if not ai_engine.validate_audio_duration(tmp_path, min_duration_sec=3.0):
-            tmp_path.unlink()
-            raise HTTPException(
-                status_code=400,
-                detail="Audio too short. Please provide at least 3 seconds of recitation."
-            )
-        
-        # Generate embedding
-        logger.info("Generating voice embedding...")
-        query_embedding = ai_engine.process_audio_file(tmp_path)
-        
-        # Clean up temp file
-        tmp_path.unlink()
-        
-        # Search database
-        logger.info("Searching for matching reciter...")
-        results = database.search_similar(query_embedding, top_k=1)
-        
-        if not results:
-            raise HTTPException(status_code=404, detail="No matching reciter found")
-        
-        # Get top match
-        reciter_name, similarity_score = results[0]
-        
-        logger.info(f"Match found: {reciter_name} (similarity: {similarity_score:.4f})")
-        
-        # Get full metadata
-        reciter_info = database.get_reciter_info(reciter_name)
-        
-        # Calculate confidence score (normalize similarity to 0-1 range)
-        # Cosine similarity is already 0-1, but we can boost confidence for high scores
-        confidence = min(similarity_score * 1.1, 1.0)  # Slight boost, cap at 1.0
-        
-        return IdentificationResult(
-            success=True,
-            reciter_name=reciter_info['name'],
-            reciter_name_english=reciter_info['name_english'],
-            confidence=confidence,
-            country=reciter_info['country'],
-            bio=reciter_info['bio'],
-            birth_year=reciter_info['birth_year'],
-            death_year=reciter_info.get('death_year'),
-            image_url=reciter_info['image_url'],
-            recitation_style=reciter_info['recitation_style'],
-            similarity_score=similarity_score
+            raise HTTPException(400, "الملف قصير جداً — يجب أن يكون 3 ثوانٍ على الأقل")
+        q = ai_engine.process_audio_file(tmp_path).reshape(1, -1)
+        scored = sorted(
+            ((n, float(cosine_similarity(q, v.reshape(1, -1))[0][0])) for n, v in vecs.items()),
+            key=lambda x: x[1], reverse=True
         )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Identification failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Identification failed: {str(e)}")
+        name, sim = scored[0]
+        info = _get_info(name) or {"name": name, "name_english": name, "country": "-",
+                                    "bio": "", "birth_year": "-", "death_year": None,
+                                    "image_url": "", "recitation_style": "-"}
+        confidence = min(sim * 1.1, 1.0)
+        result = IdentificationResult(
+            success=True, reciter_name=info["name"], reciter_name_english=info["name_english"],
+            confidence=confidence, country=info["country"], bio=info["bio"],
+            birth_year=info["birth_year"], death_year=info.get("death_year"),
+            image_url=info["image_url"], recitation_style=info["recitation_style"],
+            similarity_score=sim,
+        )
+        if user_db:
+            user_db.log_identification({
+                "reciter": name, "confidence": confidence, "similarity": sim,
+                "filename": audio_file.filename,
+                "top3": [{"name": n, "score": s} for n, s in scored[:3]],
+            })
+        return result
+    finally:
+        try: tmp_path.unlink()
+        except Exception: pass
+
+
+@app.post("/reciters/add")
+async def add_reciter(
+    name: str = Form(...),
+    country: str = Form(""),
+    bio: str = Form(""),
+    audio_files: List[UploadFile] = File(...),
+):
+    """أضف قارئاً جديداً بصوته — يمكن رفع عدة عينات لدقة أعلى."""
+    if ai_engine is None or user_db is None:
+        raise HTTPException(503, "Service not initialized")
+    blobs, names = [], []
+    for f in audio_files:
+        blobs.append(await f.read())
+        names.append(f.filename or "audio.wav")
+    try:
+        res = user_db.add_reciter(name, blobs, names, ai_engine, country=country, bio=bio)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"success": True, "message": f"تم حفظ القارئ «{res['name']}» مع {res['samples']} عيّنة", **res}
+
+
+@app.delete("/reciters/{name}")
+async def delete_reciter(name: str):
+    if user_db is None:
+        raise HTTPException(503, "Service not initialized")
+    ok = user_db.delete_reciter(name)
+    if not ok:
+        raise HTTPException(404, "القارئ غير موجود في قائمة المستخدم")
+    return {"success": True, "message": f"تم حذف «{name}»"}
 
 
 @app.get("/list-reciters", response_model=ReciterListResponse)
 async def list_reciters():
-    """
-    Get list of all 50 reciters in the database
-    
-    Returns:
-    - List of all reciters with their information
-    """
-    
-    if database is None:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-    
-    try:
-        all_reciters = database.get_all_reciters()
-        
-        reciter_list = []
-        for idx, reciter in enumerate(all_reciters, 1):
-            reciter_list.append(ReciterInfo(
-                id=reciter.get('id', idx),
-                name=reciter['name'],
-                name_english=reciter['name_english'],
-                country=reciter['country'],
-                bio=reciter['bio'],
-                birth_year=reciter['birth_year'],
-                death_year=reciter.get('death_year'),
-                image_url=reciter['image_url'],
-                recitation_style=reciter['recitation_style']
-            ))
-        
-        return ReciterListResponse(
-            success=True,
-            total_reciters=len(reciter_list),
-            reciters=reciter_list
-        )
-        
-    except Exception as e:
-        logger.error(f"Failed to list reciters: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to list reciters: {str(e)}")
+    combined = []
+    idx = 1
+    if database:
+        for r in database.get_all_reciters():
+            combined.append(ReciterInfo(id=r.get("id", idx), name=r["name"],
+                name_english=r["name_english"], country=r["country"], bio=r["bio"],
+                birth_year=r["birth_year"], death_year=r.get("death_year"),
+                image_url=r["image_url"], recitation_style=r["recitation_style"]))
+            idx += 1
+    if user_db:
+        for r in user_db.list_reciters():
+            combined.append(ReciterInfo(id=idx, name=r["name"], name_english=r["name_english"],
+                country=r["country"], bio=r["bio"], birth_year=r["birth_year"],
+                death_year=r.get("death_year"), image_url=r["image_url"],
+                recitation_style=r["recitation_style"]))
+            idx += 1
+    return ReciterListResponse(success=True, total_reciters=len(combined), reciters=combined)
 
 
-@app.get("/stats")
-async def get_stats():
-    """Get database statistics"""
-    
-    if database is None:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-    
-    return database.get_stats()
+@app.get("/history")
+async def history(limit: int = 100):
+    if user_db is None:
+        return {"items": []}
+    return {"items": user_db.list_history(limit=limit), "data_path": user_db.get_data_path()}
 
 
 @app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
-    """Global exception handler"""
-    logger.error(f"Unhandled exception: {str(exc)}")
-    return JSONResponse(
-        status_code=500,
-        content=ErrorResponse(
-            success=False,
-            error="Internal server error",
-            detail=str(exc)
-        ).dict()
-    )
+async def gxh(request, exc):
+    logger.exception("unhandled")
+    return JSONResponse(status_code=500, content={"success": False, "error": "Internal", "detail": str(exc)})
 
 
 if __name__ == "__main__":
