@@ -1,4 +1,4 @@
-import sys, threading, time, socket, traceback
+import sys, threading, time, socket, traceback, os
 from pathlib import Path
 sys.path.insert(0, str(Path(getattr(sys, "_MEIPASS", Path(__file__).parent))))
 import uvicorn, webview
@@ -21,6 +21,10 @@ def wait_port(port, timeout=900):
 
 def run_server():
     try:
+        log_path = os.environ.get("QRI_LOG_FILE")
+        if log_path:
+            import logging
+            logging.basicConfig(filename=log_path, level=logging.INFO, encoding="utf-8")
         from app.main import app
         uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")
     except Exception:
@@ -38,6 +42,9 @@ def on_start(window):
         )
 
 if __name__ == "__main__":
+    if os.environ.get("QRI_HEADLESS") == "1":
+        run_server()
+        raise SystemExit(0)
     threading.Thread(target=run_server, daemon=True).start()
     splash = f"""<body style='margin:0;background:radial-gradient(1000px 700px at 80% -10%,#0f5349 0,#021a19 70%);
     color:#eef4ea;font-family:"Segoe UI",Tahoma,sans-serif;display:flex;align-items:center;

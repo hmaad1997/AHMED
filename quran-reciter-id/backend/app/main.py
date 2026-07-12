@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
-import logging, tempfile, sys, threading, time, re
+import logging, tempfile, sys, threading, time, re, os
 from typing import Optional, List, Any, Dict
 
 from .models import IdentificationResult, ReciterListResponse, ErrorResponse, ReciterInfo
@@ -64,12 +64,40 @@ def _prepare_audio(src: Path, filename: str = "") -> Path:
 
 
 model_state = {"status": "starting", "error": "", "started_at": None, "ready_at": None}
+database_state = {"status": "starting", "error": "", "started_at": None, "ready_at": None}
+
+
+def _load_database_background():
+    global database
+    database_state.update({"status": "loading", "error": "", "started_at": time.time(), "ready_at": None})
+    try:
+        if os.environ.get("QRI_SKIP_DB") == "1":
+            logger.warning("Built-in database load skipped by QRI_SKIP_DB")
+            database = None
+            database_state.update({"status": "skipped", "error": "", "ready_at": time.time()})
+            return
+        database = ReciterDatabase(EMBEDDINGS_PATH, METADATA_PATH)
+        database_state.update({"status": "ready", "error": "", "ready_at": time.time()})
+        logger.info("✓ BUILT-IN DATABASE READY")
+    except FileNotFoundError:
+        logger.warning("Built-in database not found — running with user reciters only")
+        database = None
+        database_state.update({"status": "missing", "error": "", "ready_at": time.time()})
+    except Exception as exc:
+        logger.exception("Built-in database failed to load")
+        database = None
+        database_state.update({"status": "error", "error": str(exc), "ready_at": time.time()})
 
 
 def _load_ai_engine_background():
     global ai_engine
     model_state.update({"status": "loading", "error": "", "started_at": time.time(), "ready_at": None})
     try:
+        if os.environ.get("QRI_SKIP_AI") == "1":
+            logger.warning("AI model load skipped by QRI_SKIP_AI")
+            ai_engine = None
+            model_state.update({"status": "skipped", "error": "", "ready_at": time.time()})
+            return
         from .ai_engine import VoiceRecognitionEngine
         ai_engine = VoiceRecognitionEngine()
         model_state.update({"status": "ready", "error": "", "ready_at": time.time()})
@@ -88,17 +116,13 @@ def _model_not_ready_message() -> str:
 
 @app.on_event("startup")
 async def startup_event():
-    global database, user_db
+    global user_db
     logger.info("=== STARTING QURAN RECITER ID SERVER v3.0 (multi-stage) ===")
-    try:
-        database = ReciterDatabase(EMBEDDINGS_PATH, METADATA_PATH)
-    except FileNotFoundError:
-        logger.warning("Built-in database not found — running with user reciters only")
-        database = None
     user_db = UserReciterDB()
     logger.info(f"✓ Data folder: {user_db.get_data_path()}")
+    threading.Thread(target=_load_database_background, daemon=True).start()
     threading.Thread(target=_load_ai_engine_background, daemon=True).start()
-    logger.info("✓ SERVER READY — model is loading in background")
+    logger.info("✓ SERVER READY — database and model are loading in background")
 
 
 if STATIC_DIR.exists():
@@ -118,6 +142,8 @@ async def health():
     return {"status": "healthy", "ai": ai_engine is not None,
             "ai_status": model_state.get("status", "unknown"),
             "ai_error": model_state.get("error", ""),
+            "db_status": database_state.get("status", "unknown"),
+            "db_error": database_state.get("error", ""),
             "builtin_reciters": _unique_reciter_count() if database else 0,
             "user_reciters": len(user_db.data) if user_db else 0,
             "data_path": user_db.get_data_path() if user_db else ""}
@@ -225,6 +251,8 @@ async def identify_reciter(audio_file: UploadFile = File(...)):
         raise HTTPException(503, _model_not_ready_message())
     vecs = _all_vectors()
     if not vecs:
+        if database_state.get("status") == "loading":
+            raise HTTPException(503, "قاعدة البصمات ما زالت تُحمّل. انتظر قليلاً ثم جرّب مرة أخرى.")
         raise HTTPException(400, "لا يوجد قرّاء في قاعدة البيانات — أضف قارئاً أولاً")
 
     audio_bytes = await audio_file.read()
