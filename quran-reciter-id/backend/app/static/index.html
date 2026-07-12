@@ -135,7 +135,10 @@ label.field span{display:block;color:var(--muted);font-size:12px;margin-bottom:6
   </div>
   <div class="row">
     <button class="act" id="btnId" disabled>تعرّف الآن</button>
+    <button class="ghost" id="btnMic" title="سجّل من الميكروفون أو من صوت السمّاعة">🎙️ استمع مباشرة</button>
+    <span id="micTimer" style="color:var(--muted);font-size:13px;align-self:center"></span>
   </div>
+  <p class="hint" style="margin-top:10px">💡 زر «استمع مباشرة» يسجّل من الميكروفون. لتحليل صوت مشغّل داخل الجهاز، شغّل خيار «Stereo Mix» أو اختر «Share tab audio» في متصفح المعاينة.</p>
   <div id="idResult"></div>
 </section>
 
@@ -235,32 +238,137 @@ wireDrop($('#dropId'), $('#fileId'), files=>{
   $('#idName').textContent = idFile ? idFile.name : 'لم يُختَر ملف';
   $('#btnId').disabled = !idFile || !modelReady;
 });
-$('#btnId').onclick = async () => {
-  if(!idFile || !modelReady) return;
-  $('#btnId').disabled = true; $('#btnId').innerHTML = 'جارٍ التعرّف…<span class="spin"></span>';
+
+async function runIdentify(fileOrBlob, displayName){
+  $('#btnId').disabled = true; $('#btnMic').disabled = true;
+  $('#btnId').innerHTML = 'جارٍ التحليل…<span class="spin"></span>';
   $('#idResult').innerHTML = '';
   try{
-    const fd = new FormData(); fd.append('audio_file', idFile);
+    const fd = new FormData();
+    fd.append('audio_file', fileOrBlob, displayName || (fileOrBlob.name || 'live.wav'));
     const r = await api('/identify-reciter', {method:'POST', body:fd});
     const pct = Math.round(r.confidence*100);
-    $('#idResult').innerHTML = `
-      <div class="result">
-        <p class="name">${r.reciter_name}</p>
-        <div class="en">${r.reciter_name_english||''}</div>
-        <div>نسبة الثقة: <b>${pct}%</b></div>
-        <div class="meter"><i style="width:${pct}%"></i></div>
-        <div class="meta">
-          <div><b>الدولة</b>${r.country||'-'}</div>
-          <div><b>سنة الميلاد</b>${r.birth_year||'-'}</div>
-          <div><b>نمط التلاوة</b>${r.recitation_style||'-'}</div>
-          <div><b>Similarity</b>${r.similarity_score.toFixed(4)}</div>
-        </div>
-        ${r.bio?`<p style="color:var(--muted);margin-top:12px">${r.bio}</p>`:''}
-      </div>`;
-    toast('تم التعرّف بنجاح');
+    const topHtml = (r.top_matches||[]).slice(0,3).map((m,i)=>`
+      <div style="display:flex;justify-content:space-between;padding:8px 10px;border-bottom:1px solid var(--border)">
+        <span>${i+1}. ${m.name}</span>
+        <span style="color:var(--muted)">sim ${m.similarity} · ${Math.round((m.confidence||0)*100)}%</span>
+      </div>`).join('');
+    if(r.is_unknown){
+      $('#idResult').innerHTML = `
+        <div class="result" style="border-color:rgba(239,68,68,.45);background:linear-gradient(135deg,rgba(239,68,68,.10),rgba(56,189,248,.05))">
+          <p class="name" style="color:#ffb4b4">غير معروف</p>
+          <div class="en">Unknown reciter — low confidence</div>
+          <div>أعلى تشابه: <b>${r.similarity_score.toFixed(3)}</b> (أقل من الحد الآمن)</div>
+          <div class="meter"><i style="width:${pct}%;background:linear-gradient(90deg,#ef4444,#f59e0b)"></i></div>
+          <p style="color:var(--muted);margin-top:12px">${r.bio}</p>
+          ${topHtml?`<div style="margin-top:12px"><b style="color:var(--muted);font-size:12px">أقرب الاحتمالات (غير مؤكدة):</b>${topHtml}</div>`:''}
+        </div>`;
+      toast('لم يتم التعرّف بثقة كافية','err');
+    } else {
+      $('#idResult').innerHTML = `
+        <div class="result">
+          <p class="name">${r.reciter_name}</p>
+          <div class="en">${r.reciter_name_english||''}</div>
+          <div>نسبة الثقة: <b>${pct}%</b></div>
+          <div class="meter"><i style="width:${pct}%"></i></div>
+          <div class="meta">
+            <div><b>الدولة</b>${r.country||'-'}</div>
+            <div><b>سنة الميلاد</b>${r.birth_year||'-'}</div>
+            <div><b>نمط التلاوة</b>${r.recitation_style||'-'}</div>
+            <div><b>Similarity</b>${r.similarity_score.toFixed(4)}</div>
+          </div>
+          ${r.bio?`<p style="color:var(--muted);margin-top:12px">${r.bio}</p>`:''}
+          ${topHtml?`<details style="margin-top:12px"><summary style="cursor:pointer;color:var(--muted);font-size:12px">أقرب ${Math.min(3,(r.top_matches||[]).length)} مرشحين</summary>${topHtml}</details>`:''}
+        </div>`;
+      toast('تم التعرّف بنجاح');
+    }
   }catch(e){ toast(e.message,'err'); }
-  finally{ $('#btnId').disabled=false; $('#btnId').textContent='تعرّف الآن'; }
-};
+  finally{ $('#btnId').disabled=!idFile||!modelReady; $('#btnMic').disabled=false; $('#btnId').textContent='تعرّف الآن'; }
+}
+$('#btnId').onclick = () => idFile && runIdentify(idFile);
+
+// ===== Microphone / live capture =====
+// Records PCM via Web Audio, encodes 16 kHz mono WAV, then sends to /identify-reciter.
+let micState = null; // {ctx, stream, node, source, chunks, startedAt, timer}
+function encodeWav(chunks, sampleRate){
+  // Concatenate Float32 chunks
+  let len = 0; chunks.forEach(c=>len+=c.length);
+  const flat = new Float32Array(len); let off=0;
+  chunks.forEach(c=>{ flat.set(c, off); off+=c.length; });
+  // Downsample to 16000
+  const target = 16000;
+  const ratio = sampleRate / target;
+  const outLen = Math.floor(flat.length / ratio);
+  const out = new Float32Array(outLen);
+  for(let i=0;i<outLen;i++){
+    const start = Math.floor(i*ratio), end = Math.floor((i+1)*ratio);
+    let sum=0, n=0;
+    for(let j=start;j<end && j<flat.length;j++){ sum+=flat[j]; n++; }
+    out[i] = n ? sum/n : 0;
+  }
+  // 16-bit PCM WAV
+  const buf = new ArrayBuffer(44 + out.length*2);
+  const v = new DataView(buf);
+  const w = (o,s)=>{ for(let i=0;i<s.length;i++) v.setUint8(o+i, s.charCodeAt(i)); };
+  w(0,'RIFF'); v.setUint32(4, 36+out.length*2, true); w(8,'WAVE');
+  w(12,'fmt '); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,target,true); v.setUint32(28,target*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
+  w(36,'data'); v.setUint32(40, out.length*2, true);
+  let p = 44;
+  for(let i=0;i<out.length;i++){
+    const s = Math.max(-1, Math.min(1, out[i]));
+    v.setInt16(p, s<0 ? s*0x8000 : s*0x7FFF, true); p+=2;
+  }
+  return new Blob([buf], {type:'audio/wav'});
+}
+
+async function startMic(){
+  if(!modelReady){ toast('انتظر تحميل النموذج','err'); return; }
+  try{
+    // Try to prefer any audio source (some Chromium builds allow tab/system audio via getDisplayMedia)
+    const stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false, noiseSuppression:false, autoGainControl:false}});
+    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+    const source = ctx.createMediaStreamSource(stream);
+    const node = ctx.createScriptProcessor(4096, 1, 1);
+    const chunks = [];
+    node.onaudioprocess = e => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+    source.connect(node); node.connect(ctx.destination);
+    micState = {ctx, stream, node, source, chunks, startedAt: Date.now(), timer:null};
+    $('#btnMic').textContent = '⏹ إيقاف وتحليل';
+    $('#btnMic').classList.remove('ghost');
+    $('#btnMic').style.background = 'linear-gradient(135deg,#ef4444,#f59e0b)';
+    $('#btnMic').style.color = '#fff';
+    micState.timer = setInterval(()=>{
+      const s = Math.floor((Date.now()-micState.startedAt)/1000);
+      $('#micTimer').textContent = `⏺ يسجّل… ${s}ث`;
+      if(s >= 30) stopMic(); // hard cap 30s
+    }, 250);
+  }catch(err){
+    toast(err.name==='NotAllowedError' ? 'رفض الوصول للميكروفون' : ('خطأ: '+err.message), 'err');
+  }
+}
+
+async function stopMic(){
+  if(!micState) return;
+  const {ctx, stream, node, source, chunks, startedAt, timer} = micState;
+  clearInterval(timer);
+  const duration = (Date.now()-startedAt)/1000;
+  micState = null;
+  try{ node.disconnect(); source.disconnect(); }catch(_){}
+  stream.getTracks().forEach(t=>t.stop());
+  const sr = ctx.sampleRate;
+  await ctx.close();
+  $('#btnMic').textContent = '🎙️ استمع مباشرة';
+  $('#btnMic').classList.add('ghost');
+  $('#btnMic').style.background = ''; $('#btnMic').style.color = '';
+  $('#micTimer').textContent = '';
+  if(duration < 3){ toast('التسجيل قصير جداً — 3 ثوانٍ على الأقل','err'); return; }
+  const blob = encodeWav(chunks, sr);
+  if(blob.size < 4096){ toast('لم يُلتقط صوت — تحقّق من الميكروفون','err'); return; }
+  await runIdentify(blob, `live-${Date.now()}.wav`);
+}
+
+$('#btnMic').onclick = () => micState ? stopMic() : startMic();
 
 // Add reciter
 let addFiles = [];
