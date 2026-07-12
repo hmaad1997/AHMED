@@ -1,11 +1,11 @@
-"""FastAPI Backend Server for Quran Reciter ID — with user reciters + UI."""
+"""FastAPI Backend — Multi-Stage Verification Pipeline → ONE final answer."""
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
-import logging, tempfile, sys, threading, time
-from typing import Optional, List, Any
+import logging, tempfile, sys, threading, time, re
+from typing import Optional, List, Any, Dict
 
 from .models import IdentificationResult, ReciterListResponse, ErrorResponse, ReciterInfo
 from .database import ReciterDatabase
@@ -16,14 +16,13 @@ from sklearn.metrics.pairwise import cosine_similarity
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Quran Reciter ID API", version="2.0.0")
+app = FastAPI(title="Quran Reciter ID API", version="3.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 ai_engine: Optional[Any] = None
 database: Optional[ReciterDatabase] = None
 user_db: Optional[UserReciterDB] = None
 
-# Paths — support PyInstaller bundle
 _BASE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 EMBEDDINGS_PATH = _BASE / "data" / "embeddings" / "reciter_database.json"
 METADATA_PATH = _BASE / "data" / "reciters_metadata.json"
@@ -31,10 +30,10 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 if not STATIC_DIR.exists():
     STATIC_DIR = _BASE / "app" / "static"
 
-
 VIDEO_EXTS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".3gp", ".ts", ".mpeg", ".mpg"}
 CLIP_SECONDS = 40
-CLIP_OFFSET = 5  # skip intro
+CLIP_OFFSET = 5
+
 
 def _ffmpeg_bin() -> str:
     try:
@@ -43,40 +42,34 @@ def _ffmpeg_bin() -> str:
     except Exception:
         return "ffmpeg"
 
+
 def _prepare_audio(src: Path, filename: str = "") -> Path:
-    """If src is a video (or long file), extract up to CLIP_SECONDS of mono 16k WAV.
-    Returns a path to the audio to analyze (may equal src)."""
     ext = Path(filename or src.name).suffix.lower()
-    is_video = ext in VIDEO_EXTS
-    if not is_video:
+    if ext not in VIDEO_EXTS:
         return src
     import subprocess
     out = src.with_suffix(".extracted.wav")
-    cmd = [_ffmpeg_bin(), "-y", "-ss", str(CLIP_OFFSET), "-t", str(CLIP_SECONDS),
-           "-i", str(src), "-vn", "-ac", "1", "-ar", "16000",
-           "-f", "wav", str(out)]
-    try:
-        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
-    except subprocess.CalledProcessError as e:
-        # retry without offset (video shorter than 5s intro)
-        cmd2 = [_ffmpeg_bin(), "-y", "-t", str(CLIP_SECONDS), "-i", str(src),
-                "-vn", "-ac", "1", "-ar", "16000", "-f", "wav", str(out)]
+    for cmd in (
+        [_ffmpeg_bin(), "-y", "-ss", str(CLIP_OFFSET), "-t", str(CLIP_SECONDS), "-i", str(src),
+         "-vn", "-ac", "1", "-ar", "16000", "-f", "wav", str(out)],
+        [_ffmpeg_bin(), "-y", "-t", str(CLIP_SECONDS), "-i", str(src),
+         "-vn", "-ac", "1", "-ar", "16000", "-f", "wav", str(out)],
+    ):
         try:
-            subprocess.run(cmd2, check=True, capture_output=True, timeout=120)
-        except Exception as e2:
-            raise HTTPException(400, f"تعذّر استخراج الصوت من الفيديو: {e2}") from e2
-    return out
+            subprocess.run(cmd, check=True, capture_output=True, timeout=120)
+            return out
+        except subprocess.CalledProcessError:
+            continue
+    raise HTTPException(400, "تعذّر استخراج الصوت من الفيديو")
 
 
 model_state = {"status": "starting", "error": "", "started_at": None, "ready_at": None}
 
 
 def _load_ai_engine_background():
-    """Load the heavy SpeechBrain model after the UI/server are already open."""
     global ai_engine
     model_state.update({"status": "loading", "error": "", "started_at": time.time(), "ready_at": None})
     try:
-        # Lazy import keeps torch/speechbrain from blocking the app window before FastAPI starts.
         from .ai_engine import VoiceRecognitionEngine
         ai_engine = VoiceRecognitionEngine()
         model_state.update({"status": "ready", "error": "", "ready_at": time.time()})
@@ -96,7 +89,7 @@ def _model_not_ready_message() -> str:
 @app.on_event("startup")
 async def startup_event():
     global database, user_db
-    logger.info("=== STARTING QURAN RECITER ID SERVER ===")
+    logger.info("=== STARTING QURAN RECITER ID SERVER v3.0 (multi-stage) ===")
     try:
         database = ReciterDatabase(EMBEDDINGS_PATH, METADATA_PATH)
     except FileNotFoundError:
@@ -125,7 +118,7 @@ async def health():
     return {"status": "healthy", "ai": ai_engine is not None,
             "ai_status": model_state.get("status", "unknown"),
             "ai_error": model_state.get("error", ""),
-            "builtin_reciters": len(database.reciter_vectors) if database else 0,
+            "builtin_reciters": _unique_reciter_count() if database else 0,
             "user_reciters": len(user_db.data) if user_db else 0,
             "data_path": user_db.get_data_path() if user_db else ""}
 
@@ -135,8 +128,25 @@ async def model_status():
     return {"ready": ai_engine is not None, **model_state}
 
 
-def _all_vectors():
-    """Merge built-in + user embeddings."""
+# ============================================================================
+#   MULTI-FINGERPRINT SUPPORT
+#   Storage: each reciter can have multiple samples keyed as "Name#0", "Name#1"...
+#   The base reciter name is recovered by stripping "#<int>".
+# ============================================================================
+
+_FP_SUFFIX = re.compile(r"#\d+$")
+
+def _base_name(key: str) -> str:
+    return _FP_SUFFIX.sub("", key)
+
+
+def _unique_reciter_count() -> int:
+    if not database:
+        return 0
+    return len({_base_name(k) for k in database.reciter_vectors.keys()})
+
+
+def _all_vectors() -> Dict[str, np.ndarray]:
     vecs = {}
     if database:
         vecs.update(database.reciter_vectors)
@@ -146,15 +156,67 @@ def _all_vectors():
 
 
 def _get_info(name: str):
-    if user_db and name in user_db.data:
-        r = user_db.data[name]
-        return {"name": r["name"], "name_english": r.get("name_english", name),
+    base = _base_name(name)
+    if user_db and base in user_db.data:
+        r = user_db.data[base]
+        return {"name": r["name"], "name_english": r.get("name_english", base),
                 "country": r.get("country", "مخصّص"), "bio": r.get("bio", ""),
                 "birth_year": r.get("birth_year", "-"), "death_year": r.get("death_year"),
-                "image_url": r.get("image_url", ""), "recitation_style": r.get("recitation_style", "مخصّص")}
+                "image_url": r.get("image_url", ""),
+                "recitation_style": r.get("recitation_style", "مخصّص")}
     if database:
-        return database.get_reciter_info(name)
-    return None
+        info = database.get_reciter_info(base)
+        if info:
+            return info
+    return {"name": base, "name_english": base, "country": "-", "bio": "",
+            "birth_year": "-", "death_year": None, "image_url": "", "recitation_style": "-"}
+
+
+# ============================================================================
+#   MULTI-STAGE VERIFICATION PIPELINE
+# ============================================================================
+#   Stage 1: Fast broad match — cosine sim against ALL fingerprints → top 30
+#   Stage 2: Multi-fingerprint aggregation — max score per BASE reciter name
+#   Stage 3: Segment agreement — 8 × 5s segments must vote consistently
+#   Stage 4: S-Norm — z-score against cohort of top-100 impostor mean/std
+#   Stage 5: Margin gate — winner must beat #2 by a margin
+#   Stage 6: Absolute similarity gate — winner sim ≥ MIN_SIM
+#   → All gates pass ⇒ ONE reciter. Any gate fails ⇒ "غير معروف".
+# ============================================================================
+
+MIN_SIM = 0.58           # absolute cosine threshold
+MIN_MARGIN = 0.04        # winner must beat #2 by this margin (base names)
+MIN_AGREEMENT = 0.60     # ≥60% segments must vote the winner
+MIN_SEG_MEAN = 0.50      # mean per-segment top-1 similarity
+MIN_ZSCORE = 2.0         # S-Norm z-score threshold (winner vs cohort)
+
+
+def _score_all(query_vec: np.ndarray, vecs: Dict[str, np.ndarray]) -> List[tuple]:
+    """Return sorted list of (fingerprint_key, similarity)."""
+    names = list(vecs.keys())
+    mat = np.stack([vecs[n] for n in names], axis=0)
+    q = query_vec.reshape(1, -1)
+    sims = cosine_similarity(q, mat)[0]
+    return sorted(zip(names, sims.astype(float)), key=lambda x: x[1], reverse=True)
+
+
+def _aggregate_by_base(scored: List[tuple]) -> List[tuple]:
+    """Group fingerprints by base reciter name; take the MAX score per reciter."""
+    best: Dict[str, float] = {}
+    for key, s in scored:
+        b = _base_name(key)
+        if s > best.get(b, -1.0):
+            best[b] = s
+    return sorted(best.items(), key=lambda x: x[1], reverse=True)
+
+
+def _snorm_zscore(winner_sim: float, all_scores: List[float]) -> float:
+    """Compute S-Norm z-score of winner against cohort (all others)."""
+    if len(all_scores) < 20:
+        return 99.0  # too few → skip normalization
+    others = np.array(sorted(all_scores, reverse=True)[1:101])  # top-100 impostors
+    mu, sigma = float(others.mean()), float(others.std() + 1e-6)
+    return (winner_sim - mu) / sigma
 
 
 @app.post("/identify-reciter", response_model=IdentificationResult)
@@ -174,83 +236,90 @@ async def identify_reciter(audio_file: UploadFile = File(...)):
         if analysis_path != tmp_path:
             extracted_path = analysis_path
         if not ai_engine.validate_audio_duration(analysis_path, min_duration_sec=8.0):
-            raise HTTPException(400, "الملف قصير جداً — التحليل العميق يحتاج 8 ثوانٍ على الأقل (ويُفضّل 40 ثانية)")
+            raise HTTPException(400, "الملف قصير جداً — التحليل العميق يحتاج 8 ثوانٍ على الأقل (يُفضّل 40 ثانية)")
 
-        # ═══ التحليل العميق: 40 ثانية × 8 مقاطع ═══
-        # VAD → قص 40 ثانية من الوسط → 8 بصمات × 5 ثوانٍ → متوسط + تصويت
+        # ═══ Deep analysis: VAD → 40s → 8 × 5s ensemble embeddings ═══
         mean_emb, seg_embs, analyzed_sec = ai_engine.process_audio_segments(analysis_path)
-        q = mean_emb.reshape(1, -1)
 
-        # المرحلة 1: ترتيب عام بالبصمة المتوسطة
-        scored = sorted(
-            ((n, float(cosine_similarity(q, v.reshape(1, -1))[0][0])) for n, v in vecs.items()),
-            key=lambda x: x[1], reverse=True
-        )
-        name, sim = scored[0]
-        second_sim = scored[1][1] if len(scored) > 1 else 0.0
-        margin = max(0.0, sim - second_sim)
+        # ─── Stage 1: broad score across all fingerprints ───
+        scored_all = _score_all(mean_emb, vecs)
 
-        # المرحلة 2: تصويت لكل مقطع (كشف انتحال/عدم تناسق)
-        seg_top_names, seg_top_scores = [], []
+        # ─── Stage 2: aggregate multi-fingerprints by base name ───
+        base_ranked = _aggregate_by_base(scored_all)
+        winner_name, winner_sim = base_ranked[0]
+        second_sim = base_ranked[1][1] if len(base_ranked) > 1 else 0.0
+        margin = winner_sim - second_sim
+
+        # ─── Stage 3: per-segment agreement (each segment votes a base name) ───
+        seg_top_bases, seg_top_scores = [], []
         for e in seg_embs:
-            eq = e.reshape(1, -1)
-            best_n, best_s = None, -1.0
-            for n_, v_ in vecs.items():
-                sc = float(cosine_similarity(eq, v_.reshape(1, -1))[0][0])
-                if sc > best_s:
-                    best_s, best_n = sc, n_
-            seg_top_names.append(best_n); seg_top_scores.append(best_s)
-        agreement = seg_top_names.count(name) / max(1, len(seg_top_names))
-        seg_mean_score = sum(seg_top_scores) / max(1, len(seg_top_scores))
+            s_scored = _score_all(e, vecs)
+            s_agg = _aggregate_by_base(s_scored)
+            seg_top_bases.append(s_agg[0][0])
+            seg_top_scores.append(s_agg[0][1])
+        agreement = seg_top_bases.count(winner_name) / max(1, len(seg_top_bases))
+        seg_mean_score = float(np.mean(seg_top_scores)) if seg_top_scores else 0.0
 
-        # المرحلة 3: تحقّق مضاعف — يجب أن يجتاز جميع الشروط
-        confidence = max(0.0, min(1.0, (sim - 0.35) / 0.55)) * \
-                     (0.5 + min(margin / 0.15, 1.0) * 0.2 + agreement * 0.3)
+        # ─── Stage 4: S-Norm z-score against impostor cohort ───
+        z = _snorm_zscore(winner_sim, [s for _, s in base_ranked])
 
-        MIN_SIM = 0.58          # ↑ من 0.55
-        MIN_MARGIN = 0.04       # ↑ من 0.03
-        MIN_AGREEMENT = 0.6     # ↑ من 0.5 — على الأقل 5/8 مقاطع تتفق
-        MIN_SEG_MEAN = 0.50     # متوسط أعلى مقطع لكل شريحة
-        is_unknown = (
-            sim < MIN_SIM or margin < MIN_MARGIN or
-            agreement < MIN_AGREEMENT or seg_mean_score < MIN_SEG_MEAN
+        # ─── Stages 5+6: gates ───
+        gates = {
+            "similarity":  winner_sim >= MIN_SIM,
+            "margin":      margin >= MIN_MARGIN,
+            "agreement":   agreement >= MIN_AGREEMENT,
+            "seg_mean":    seg_mean_score >= MIN_SEG_MEAN,
+            "zscore":      z >= MIN_ZSCORE,
+        }
+        passed = sum(gates.values())
+        # Require at least 4/5 gates (zscore may fail on small DBs)
+        is_unknown = passed < 4 or not gates["similarity"]
+
+        confidence = float(np.clip(
+            0.25 * min(max((winner_sim - 0.4) / 0.35, 0), 1) +
+            0.20 * min(max(margin / 0.10, 0), 1) +
+            0.25 * agreement +
+            0.15 * min(max((seg_mean_score - 0.4) / 0.30, 0), 1) +
+            0.15 * min(max((z - 1.5) / 2.0, 0), 1),
+            0.0, 1.0
+        ))
+
+        logger.info(
+            f"[PIPELINE] winner={winner_name} sim={winner_sim:.3f} margin={margin:.3f} "
+            f"agree={agreement:.2f} seg_mean={seg_mean_score:.3f} z={z:.2f} "
+            f"gates={passed}/5 → {'UNKNOWN' if is_unknown else 'MATCH'}"
         )
-        top_matches = [
-            {"name": n, "similarity": round(s, 4), "confidence": round(max(0.0, min(1.0, (s - 0.35) / 0.55)), 3)}
-            for n, s in scored[:5]
-        ]
+
         if is_unknown:
             result = IdentificationResult(
-                success=True,
-                reciter_name="غير معروف",
-                reciter_name_english="Unknown",
-                confidence=round(confidence, 3),
-                country="-", bio="لم يتم التعرّف على القارئ بثقة كافية. جرّب عيّنة أطول أو أوضح، أو أضف القارئ إلى قاعدة البيانات.",
+                success=True, reciter_name="غير معروف", reciter_name_english="Unknown",
+                confidence=round(confidence, 3), country="-",
+                bio="لم يتم التعرّف على القارئ بثقة كافية. جرّب عيّنة أطول أو أوضح، أو أضف القارئ إلى قاعدة البيانات.",
                 birth_year="-", death_year=None, image_url="",
-                recitation_style="-", similarity_score=round(sim, 4),
-                is_unknown=True, top_matches=top_matches,
+                recitation_style="-", similarity_score=round(winner_sim, 4),
+                is_unknown=True, top_matches=[],
             )
         else:
-            info = _get_info(name) or {"name": name, "name_english": name, "country": "-",
-                                        "bio": "", "birth_year": "-", "death_year": None,
-                                        "image_url": "", "recitation_style": "-"}
+            info = _get_info(winner_name)
             result = IdentificationResult(
                 success=True, reciter_name=info["name"], reciter_name_english=info["name_english"],
                 confidence=round(confidence, 3), country=info["country"], bio=info["bio"],
                 birth_year=info["birth_year"], death_year=info.get("death_year"),
                 image_url=info["image_url"], recitation_style=info["recitation_style"],
-                similarity_score=round(sim, 4),
-                is_unknown=False, top_matches=top_matches,
+                similarity_score=round(winner_sim, 4),
+                is_unknown=False,
+                # Return ONLY the winner — no top-3 list to the user
+                top_matches=[{"name": info["name"], "similarity": round(winner_sim, 4),
+                              "confidence": round(confidence, 3)}],
             )
         if user_db:
             user_db.log_identification({
-                "reciter": name, "confidence": confidence, "similarity": sim,
+                "reciter": winner_name, "confidence": confidence, "similarity": winner_sim,
                 "filename": audio_file.filename,
-                "top3": [{"name": n, "score": s} for n, s in scored[:3]],
-                "segments": len(seg_embs),
-                "agreement": round(agreement, 2),
+                "gates_passed": passed, "gates": gates,
+                "margin": round(margin, 3), "agreement": round(agreement, 2),
+                "seg_mean": round(seg_mean_score, 3), "zscore": round(z, 2),
                 "analyzed_sec": round(analyzed_sec, 1),
-                "margin": round(margin, 3),
             })
         return result
     finally:
@@ -288,8 +357,7 @@ async def add_reciter(
                 try: vpath.unlink()
                 except Exception: pass
         else:
-            blobs.append(raw)
-            names.append(fname)
+            blobs.append(raw); names.append(fname)
     try:
         res = user_db.add_reciter(name, blobs, names, ai_engine, country=country, bio=bio)
     except ValueError as e:
@@ -311,9 +379,14 @@ async def delete_reciter(name: str):
 async def list_reciters():
     combined = []
     idx = 1
+    seen = set()
     if database:
         for r in database.get_all_reciters():
-            combined.append(ReciterInfo(id=r.get("id", idx), name=r["name"],
+            base = _base_name(r.get("name", ""))
+            if base in seen:
+                continue
+            seen.add(base)
+            combined.append(ReciterInfo(id=r.get("id", idx), name=base,
                 name_english=r["name_english"], country=r["country"], bio=r["bio"],
                 birth_year=r["birth_year"], death_year=r.get("death_year"),
                 image_url=r["image_url"], recitation_style=r["recitation_style"]))
@@ -344,4 +417,3 @@ async def gxh(request, exc):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
-
