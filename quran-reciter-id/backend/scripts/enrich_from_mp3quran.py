@@ -213,6 +213,26 @@ def extra_islamic_network_samples(r):
         yield f"https://cdn.islamic.network/quran/audio/128/{ident}/{ayah}.mp3", f"in_{ayah}"
 
 
+# ---------- NEW: islamic.app API (100+ reciters, ar.* identifiers reuse islamic.network CDN) ----------
+ISLAMICAPP_API = "https://api.islamic.app/v1/audio/reciters"
+
+def islamicapp_reciters():
+    try:
+        d = requests.get(ISLAMICAPP_API, headers=HEADERS, timeout=TIMEOUT).json()
+        return d.get("data", []) if isinstance(d, dict) else []
+    except Exception as e:
+        log(f"islamic.app fail: {e}"); return []
+
+def islamicapp_samples(r):
+    ident = r.get("identifier", "")
+    if not ident: return
+    # Some are audio.type=surah: try surah endpoint via cdn.islamic.network fallback (ayah endpoints)
+    for ayah in (1, 8, 293, 1000, 2000, 3000):
+        yield f"https://cdn.islamic.network/quran/audio/128/{ident}/{ayah}.mp3", f"iapp_{ayah}"
+    for ayah in (1, 100, 500):
+        yield f"https://cdn.islamic.network/quran/audio/64/{ident}/{ayah}.mp3", f"iapp64_{ayah}"
+
+
 # ---------- NEW: quran.com API (chapter_reciters + recitations) ----------
 def qurancom_chapter_reciters():
     try:
@@ -359,6 +379,7 @@ def main():
         ("quran.com chapter_reciters", qurancom_chapter_reciters, lambda r: (r.get("arabic_name") or r.get("name") or "", f"qcom_{r.get('id')}", qurancom_chapter_samples(r))),
         ("quran.com recitations (ayah)", qurancom_ayah_recitations, lambda r: (r.get("translated_name",{}).get("name") or r.get("reciter_name") or r.get("name") or "", f"qcomv_{r.get('id')}", qurancom_ayah_samples(r))),
         ("tvquran/mp3quran cdn", tvquran_reciters, lambda r: (r["name_ar"], f"tv_{r['slug']}", tvquran_samples(r))),
+        ("islamic.app API", islamicapp_reciters, lambda r: (r.get("name","") or r.get("englishName",""), f"iapp_{r.get('identifier','').replace('.','_')}", islamicapp_samples(r))),
         ("archive.org", archive_reciters, lambda r: (r["name_ar"], f"arch_{r['item']}", archive_samples(r))),
     ]
 
