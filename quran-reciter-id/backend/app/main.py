@@ -4,11 +4,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
-import logging, tempfile, sys
-from typing import Optional, List
+import logging, tempfile, sys, threading, time
+from typing import Optional, List, Any
 
 from .models import IdentificationResult, ReciterListResponse, ErrorResponse, ReciterInfo
-from .ai_engine import VoiceRecognitionEngine
 from .database import ReciterDatabase
 from .user_db import UserReciterDB
 import numpy as np
@@ -20,7 +19,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Quran Reciter ID API", version="2.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-ai_engine: Optional[VoiceRecognitionEngine] = None
+ai_engine: Optional[Any] = None
 database: Optional[ReciterDatabase] = None
 user_db: Optional[UserReciterDB] = None
 
@@ -33,11 +32,35 @@ if not STATIC_DIR.exists():
     STATIC_DIR = _BASE / "app" / "static"
 
 
+model_state = {"status": "starting", "error": "", "started_at": None, "ready_at": None}
+
+
+def _load_ai_engine_background():
+    """Load the heavy SpeechBrain model after the UI/server are already open."""
+    global ai_engine
+    model_state.update({"status": "loading", "error": "", "started_at": time.time(), "ready_at": None})
+    try:
+        # Lazy import keeps torch/speechbrain from blocking the app window before FastAPI starts.
+        from .ai_engine import VoiceRecognitionEngine
+        ai_engine = VoiceRecognitionEngine()
+        model_state.update({"status": "ready", "error": "", "ready_at": time.time()})
+        logger.info("✓ AI MODEL READY")
+    except Exception as exc:
+        logger.exception("AI model failed to load")
+        ai_engine = None
+        model_state.update({"status": "error", "error": str(exc), "ready_at": time.time()})
+
+
+def _model_not_ready_message() -> str:
+    if model_state.get("status") == "error":
+        return "فشل تحميل نموذج الذكاء. أعد تشغيل التطبيق أو تأكد من اتصال الإنترنت أول مرة."
+    return "نموذج التعرف الصوتي ما زال يحمّل. انتظر قليلاً ثم جرّب مرة أخرى."
+
+
 @app.on_event("startup")
 async def startup_event():
-    global ai_engine, database, user_db
+    global database, user_db
     logger.info("=== STARTING QURAN RECITER ID SERVER ===")
-    ai_engine = VoiceRecognitionEngine()
     try:
         database = ReciterDatabase(EMBEDDINGS_PATH, METADATA_PATH)
     except FileNotFoundError:
@@ -45,7 +68,8 @@ async def startup_event():
         database = None
     user_db = UserReciterDB()
     logger.info(f"✓ Data folder: {user_db.get_data_path()}")
-    logger.info("✓ SERVER READY")
+    threading.Thread(target=_load_ai_engine_background, daemon=True).start()
+    logger.info("✓ SERVER READY — model is loading in background")
 
 
 if STATIC_DIR.exists():
@@ -63,9 +87,16 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy", "ai": ai_engine is not None,
+            "ai_status": model_state.get("status", "unknown"),
+            "ai_error": model_state.get("error", ""),
             "builtin_reciters": len(database.reciter_vectors) if database else 0,
             "user_reciters": len(user_db.data) if user_db else 0,
             "data_path": user_db.get_data_path() if user_db else ""}
+
+
+@app.get("/model-status")
+async def model_status():
+    return {"ready": ai_engine is not None, **model_state}
 
 
 def _all_vectors():
@@ -93,7 +124,7 @@ def _get_info(name: str):
 @app.post("/identify-reciter", response_model=IdentificationResult)
 async def identify_reciter(audio_file: UploadFile = File(...)):
     if ai_engine is None:
-        raise HTTPException(503, "Service not initialized")
+        raise HTTPException(503, _model_not_ready_message())
     vecs = _all_vectors()
     if not vecs:
         raise HTTPException(400, "لا يوجد قرّاء في قاعدة البيانات — أضف قارئاً أولاً")
@@ -142,7 +173,7 @@ async def add_reciter(
 ):
     """أضف قارئاً جديداً بصوته — يمكن رفع عدة عينات لدقة أعلى."""
     if ai_engine is None or user_db is None:
-        raise HTTPException(503, "Service not initialized")
+        raise HTTPException(503, _model_not_ready_message())
     blobs, names = [], []
     for f in audio_files:
         blobs.append(await f.read())
