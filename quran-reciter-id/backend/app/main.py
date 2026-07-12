@@ -217,13 +217,38 @@ MIN_SEG_MEAN = 0.50      # mean per-segment top-1 similarity
 MIN_ZSCORE = 2.0         # S-Norm z-score threshold (winner vs cohort)
 
 
+def _unit(v: np.ndarray) -> np.ndarray:
+    arr = np.asarray(v, dtype=np.float32).reshape(-1)
+    return arr / (float(np.linalg.norm(arr)) + 1e-9)
+
+
+def _compatible_vectors(query_vec: np.ndarray, db_vec: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Return same-length normalized vectors.
+
+    The bundled pretrained database is ECAPA-only (192 dims). New/user fingerprints
+    can be Ensemble ECAPA+XVector (larger dims). When dimensions differ, compare
+    the shared ECAPA prefix instead of crashing or mixing incompatible vectors.
+    """
+    q = np.asarray(query_vec, dtype=np.float32).reshape(-1)
+    d = np.asarray(db_vec, dtype=np.float32).reshape(-1)
+    n = min(q.size, d.size)
+    if n <= 0:
+        raise ValueError("empty embedding vector")
+    return _unit(q[:n]), _unit(d[:n])
+
+
 def _score_all(query_vec: np.ndarray, vecs: Dict[str, np.ndarray]) -> List[tuple]:
-    """Return sorted list of (fingerprint_key, similarity)."""
-    names = list(vecs.keys())
-    mat = np.stack([vecs[n] for n in names], axis=0)
-    q = query_vec.reshape(1, -1)
-    sims = cosine_similarity(q, mat)[0]
-    return sorted(zip(names, sims.astype(float)), key=lambda x: x[1], reverse=True)
+    """Return sorted list of (fingerprint_key, similarity), supporting mixed DB dimensions."""
+    similarities = []
+    for name, reciter_vec in vecs.items():
+        try:
+            q, r = _compatible_vectors(query_vec, reciter_vec)
+            similarities.append((name, float(np.dot(q, r))))
+        except Exception as exc:
+            logger.warning(f"Skipping incompatible fingerprint {name}: {exc}")
+    if not similarities:
+        raise ValueError("No compatible fingerprints in database")
+    return sorted(similarities, key=lambda x: x[1], reverse=True)
 
 
 def _aggregate_by_base(scored: List[tuple]) -> List[tuple]:
