@@ -43,8 +43,9 @@ class VoiceRecognitionEngine:
     """SpeechBrain ECAPA-TDNN with VAD + multi-segment averaging."""
 
     SAMPLE_RATE = 16000
-    SEGMENT_SEC = 10          # length of each analysis window
-    MAX_SEGMENTS = 5          # cap segments per file
+    SEGMENT_SEC = 5           # length of each analysis window
+    MAX_SEGMENTS = 8          # 8 × 5s = 40s deep analysis
+    TARGET_ANALYSIS_SEC = 40  # trim speech to ~40s before segmenting
     VAD_MIN_SPEECH_MS = 500   # min speech chunk length
 
     def __init__(self):
@@ -131,23 +132,33 @@ class VoiceRecognitionEngine:
 
     def process_audio_segments(self, audio_path: Path):
         """
-        Return (mean_embedding, per_segment_embeddings).
-        Splits VAD-cleaned speech into up to MAX_SEGMENTS windows of SEGMENT_SEC.
-        Enables:
-          - averaging (noise robustness)
-          - spoof/impersonation detection (segments disagree)
+        Deep 40-second analysis:
+          1. Load audio → VAD (remove silence/music)
+          2. Trim/pad speech to ~40s
+          3. Split into 8 segments × 5s
+          4. Embed each segment + compute mean
+        Returns (mean_embedding, per_segment_embeddings, analyzed_sec).
         """
         signal = self._load_mono_16k(audio_path)
         signal = self._apply_vad(signal)
+        target_len = self.TARGET_ANALYSIS_SEC * self.SAMPLE_RATE
         seg_len = self.SEGMENT_SEC * self.SAMPLE_RATE
         total = signal.shape[1]
 
+        # Trim to the middle 40s if speech is longer (most representative)
+        if total > target_len:
+            start = (total - target_len) // 2
+            signal = signal[:, start:start + target_len]
+            total = target_len
+            logger.info(f"Trimmed to central {self.TARGET_ANALYSIS_SEC}s of speech")
+
+        analyzed_sec = total / self.SAMPLE_RATE
+
         if total < seg_len:
             emb = self._embed(signal)
-            return emb, [emb]
+            return emb, [emb], analyzed_sec
 
         n_segs = min(self.MAX_SEGMENTS, max(1, total // seg_len))
-        # evenly spaced (not overlapping) — spread across the recording
         stride = (total - seg_len) // max(1, n_segs - 1) if n_segs > 1 else 0
         embeddings = []
         for i in range(n_segs):
@@ -156,8 +167,8 @@ class VoiceRecognitionEngine:
             embeddings.append(self._embed(chunk))
         embeddings = np.stack(embeddings, axis=0)
         mean = embeddings.mean(axis=0)
-        logger.info(f"Computed {n_segs}-segment average embedding")
-        return mean, [e for e in embeddings]
+        logger.info(f"Deep analysis: {n_segs} segments over {analyzed_sec:.1f}s")
+        return mean, [e for e in embeddings], analyzed_sec
 
     def validate_audio_duration(self, audio_path: Path, min_duration_sec: float = 3.0) -> bool:
         try:
