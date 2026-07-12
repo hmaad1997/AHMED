@@ -141,17 +141,41 @@ async def identify_reciter(audio_file: UploadFile = File(...)):
             key=lambda x: x[1], reverse=True
         )
         name, sim = scored[0]
-        info = _get_info(name) or {"name": name, "name_english": name, "country": "-",
-                                    "bio": "", "birth_year": "-", "death_year": None,
-                                    "image_url": "", "recitation_style": "-"}
-        confidence = min(sim * 1.1, 1.0)
-        result = IdentificationResult(
-            success=True, reciter_name=info["name"], reciter_name_english=info["name_english"],
-            confidence=confidence, country=info["country"], bio=info["bio"],
-            birth_year=info["birth_year"], death_year=info.get("death_year"),
-            image_url=info["image_url"], recitation_style=info["recitation_style"],
-            similarity_score=sim,
-        )
+        second_sim = scored[1][1] if len(scored) > 1 else 0.0
+        # Confidence combines absolute similarity + margin over runner-up
+        margin = max(0.0, sim - second_sim)
+        confidence = max(0.0, min(1.0, (sim - 0.35) / 0.55)) * (0.7 + min(margin / 0.15, 1.0) * 0.3)
+        # Threshold: below this we do NOT trust the match
+        MIN_SIM = 0.55
+        MIN_MARGIN = 0.03
+        is_unknown = sim < MIN_SIM or margin < MIN_MARGIN
+        top_matches = [
+            {"name": n, "similarity": round(s, 4), "confidence": round(max(0.0, min(1.0, (s - 0.35) / 0.55)), 3)}
+            for n, s in scored[:5]
+        ]
+        if is_unknown:
+            result = IdentificationResult(
+                success=True,
+                reciter_name="غير معروف",
+                reciter_name_english="Unknown",
+                confidence=round(confidence, 3),
+                country="-", bio="لم يتم التعرّف على القارئ بثقة كافية. جرّب عيّنة أطول أو أوضح، أو أضف القارئ إلى قاعدة البيانات.",
+                birth_year="-", death_year=None, image_url="",
+                recitation_style="-", similarity_score=round(sim, 4),
+                is_unknown=True, top_matches=top_matches,
+            )
+        else:
+            info = _get_info(name) or {"name": name, "name_english": name, "country": "-",
+                                        "bio": "", "birth_year": "-", "death_year": None,
+                                        "image_url": "", "recitation_style": "-"}
+            result = IdentificationResult(
+                success=True, reciter_name=info["name"], reciter_name_english=info["name_english"],
+                confidence=round(confidence, 3), country=info["country"], bio=info["bio"],
+                birth_year=info["birth_year"], death_year=info.get("death_year"),
+                image_url=info["image_url"], recitation_style=info["recitation_style"],
+                similarity_score=round(sim, 4),
+                is_unknown=False, top_matches=top_matches,
+            )
         if user_db:
             user_db.log_identification({
                 "reciter": name, "confidence": confidence, "similarity": sim,
