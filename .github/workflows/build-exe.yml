@@ -12,7 +12,7 @@ env:
 jobs:
   backend-exe:
     runs-on: windows-latest
-    timeout-minutes: 240
+    timeout-minutes: 300
     defaults:
       run:
         working-directory: quran-reciter-id/backend
@@ -21,28 +21,57 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+
+      - name: Install ffmpeg
+        run: choco install ffmpeg -y --no-progress
+        working-directory: .
+
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install --index-url https://download.pytorch.org/whl/cpu torch==2.1.0 torchaudio==2.1.0
           pip install -r requirements.txt
-          pip install pyinstaller pywebview openpyxl requests tqdm
-      - name: Pre-download SpeechBrain model
+          pip install pyinstaller pywebview
+
+      - name: Pre-download SpeechBrain models (ECAPA + X-Vector ensemble)
         run: |
           python -c "from speechbrain.pretrained import EncoderClassifier; EncoderClassifier.from_hparams(source='speechbrain/spkrec-ecapa-voxceleb', savedir='pretrained_models/spkrec-ecapa-voxceleb')"
-      - name: Build pretrained reciter database (364 reciters)
+          python -c "from speechbrain.pretrained import EncoderClassifier; EncoderClassifier.from_hparams(source='speechbrain/spkrec-xvect-voxceleb', savedir='pretrained_models/spkrec-xvect-voxceleb')"
+
+      - name: Build pretrained reciter database
         continue-on-error: true
         run: python scripts/build_pretrained_db.py
-      - name: Enrich DB from open-source samples (mp3quran + everyayah + 8 more)
+
+      - name: Enrich from open-source Quran APIs (10 sources)
         continue-on-error: true
+        timeout-minutes: 60
         run: python scripts/enrich_from_mp3quran.py
-      - name: Enrich DB from HF quran-reciters-8sec-dataset (106k clips → +500 reciters)
+
+      - name: Enrich from HF quran-reciters-8sec-dataset
         continue-on-error: true
         timeout-minutes: 90
         run: python scripts/enrich_from_hf.py
+
+      - name: Enrich from streaming datasets (tarteel + Wider-Community)
+        continue-on-error: true
+        timeout-minutes: 60
+        env:
+          HF_SAMPLES: '3'
+          HF_MAX_ROWS: '5000'
+        run: python scripts/enrich_streaming_datasets.py
+
+      - name: Enrich from YouTube for missing Excel reciters (multi-fingerprint)
+        continue-on-error: true
+        timeout-minutes: 90
+        env:
+          YT_PER_RECITER: '3'
+          YT_CLIP_SECONDS: '60'
+          QURAN_EXCEL: 'data/reciters.xlsx'
+        run: python scripts/enrich_from_youtube.py
+
       - name: Ensure data folder exists
-        run: |
-          if (!(Test-Path data)) { New-Item -ItemType Directory -Path data | Out-Null }
+        run: if (!(Test-Path data)) { New-Item -ItemType Directory -Path data | Out-Null }
+
       - name: Build EXE (windowed, no CMD)
         run: |
           pyinstaller --onefile --noconsole --name QuranReciterID `
@@ -51,12 +80,12 @@ jobs:
             --add-data "data;data" `
             --collect-all app `
             --collect-all speechbrain --collect-all librosa `
-            --collect-all faiss --collect-data sklearn `
+            --collect-data sklearn `
             --collect-all webview --collect-all uvicorn --collect-all imageio_ffmpeg `
             launcher.py
+
       - uses: actions/upload-artifact@v4
         with:
           name: QuranReciterID-exe
           path: quran-reciter-id/backend/dist/QuranReciterID.exe
           if-no-files-found: error
-
