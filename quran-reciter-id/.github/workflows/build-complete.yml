@@ -9,120 +9,94 @@ on:
 jobs:
   build-all:
     runs-on: windows-latest
-    
+    timeout-minutes: 180
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
-    
-    # Build Flutter App
+
+    # ---------- Flutter ----------
     - name: Setup Flutter
       uses: subosito/flutter-action@v2
       with:
         flutter-version: '3.16.0'
         channel: 'stable'
-    
+
     - name: Enable Windows Desktop
       run: flutter config --enable-windows-desktop
-    
+
     - name: Install Flutter dependencies
-      working-directory: ./flutter_app
+      working-directory: ./quran-reciter-id/flutter_app
       run: flutter pub get
-    
+
     - name: Build Windows App
-      working-directory: ./flutter_app
+      working-directory: ./quran-reciter-id/flutter_app
       run: flutter build windows --release
-    
-    # Build Backend
+
+    # ---------- Python ----------
     - name: Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
-    
+
     - name: Install Python dependencies
-      working-directory: ./backend
+      working-directory: ./quran-reciter-id/backend
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pyinstaller
-    
-    - name: Build Backend
-      working-directory: ./backend
+        pip install pyinstaller huggingface_hub requests tqdm
+
+    # ---------- Pre-built fingerprints DB ----------
+    - name: Build pre-trained fingerprints DB (Hugging Face)
+      working-directory: ./quran-reciter-id/backend
+      continue-on-error: true
+      run: python scripts/build_pretrained_db.py
+
+    - name: Enrich fingerprints from open sources (mp3quran + everyayah)
+      working-directory: ./quran-reciter-id/backend
+      continue-on-error: true
+      run: python scripts/enrich_from_mp3quran.py
+
+    # ---------- PyInstaller ----------
+    - name: Build Backend EXE (windowed launcher)
+      working-directory: ./quran-reciter-id/backend
       run: |
-        pyinstaller --onefile --name backend-server run_server.py
-    
-    # Package Everything
+        pyinstaller --onefile --noconsole --name QuranReciterID `
+          --add-data "data;data" `
+          --add-data "app;app" `
+          launcher.py
+
+    # ---------- Package ----------
     - name: Create Complete Package
+      shell: cmd
       run: |
         mkdir QuranReciterID
-        
-        REM Copy Flutter App
-        xcopy /E /I /Y flutter_app\build\windows\x64\runner\Release\* QuranReciterID\app\
-        
-        REM Copy Backend
+        xcopy /E /I /Y quran-reciter-id\flutter_app\build\windows\x64\runner\Release\* QuranReciterID\app\
         mkdir QuranReciterID\backend
-        copy backend\dist\backend-server.exe QuranReciterID\backend\
-        xcopy /E /I /Y backend\data QuranReciterID\backend\data\
-        
-        REM Create Start Script
+        copy quran-reciter-id\backend\dist\QuranReciterID.exe QuranReciterID\backend\
+        xcopy /E /I /Y quran-reciter-id\backend\data QuranReciterID\backend\data\
         echo @echo off > QuranReciterID\START.bat
-        echo echo ============================================ >> QuranReciterID\START.bat
-        echo echo   Quran Reciter ID - Starting... >> QuranReciterID\START.bat
-        echo echo ============================================ >> QuranReciterID\START.bat
-        echo. >> QuranReciterID\START.bat
-        echo echo Starting Backend Server... >> QuranReciterID\START.bat
-        echo start /B backend\backend-server.exe >> QuranReciterID\START.bat
-        echo. >> QuranReciterID\START.bat
-        echo echo Waiting for backend to start... >> QuranReciterID\START.bat
-        echo timeout /t 5 /nobreak ^>nul >> QuranReciterID\START.bat
-        echo. >> QuranReciterID\START.bat
-        echo echo Starting Desktop App... >> QuranReciterID\START.bat
-        echo start app\quran_reciter_id.exe >> QuranReciterID\START.bat
-        echo. >> QuranReciterID\START.bat
-        echo echo Application started! >> QuranReciterID\START.bat
-        echo pause >> QuranReciterID\START.bat
-        
-        REM Create README
-        echo # Quran Reciter ID > QuranReciterID\README.txt
-        echo. >> QuranReciterID\README.txt
-        echo ## How to Run: >> QuranReciterID\README.txt
-        echo 1. Double-click START.bat >> QuranReciterID\README.txt
-        echo 2. Wait for the application to open >> QuranReciterID\README.txt
-        echo 3. Enjoy! >> QuranReciterID\README.txt
-    
+        echo start "" backend\QuranReciterID.exe >> QuranReciterID\START.bat
+        echo timeout /t 8 /nobreak ^>nul >> QuranReciterID\START.bat
+        echo start "" app\quran_reciter_id.exe >> QuranReciterID\START.bat
+
     - name: Create ZIP Archive
-      run: |
-        powershell Compress-Archive -Path QuranReciterID\* -DestinationPath QuranReciterID-Windows-Complete.zip
-    
+      run: powershell Compress-Archive -Path QuranReciterID\* -DestinationPath QuranReciterID-Windows-Complete.zip
+
     - name: Upload Complete Package
       uses: actions/upload-artifact@v3
       with:
         name: QuranReciterID-Complete-Package
         path: QuranReciterID-Windows-Complete.zip
         retention-days: 90
-    
+
     - name: Create GitHub Release
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
         files: QuranReciterID-Windows-Complete.zip
         body: |
-          # Quran Reciter ID - Windows Desktop App
-          
-          ## التحميل والتشغيل:
-          
-          1. حمّل ملف `QuranReciterID-Windows-Complete.zip`
-          2. فك الضغط
-          3. شغّل `START.bat`
-          4. استمتع! 🎉
-          
-          ## المحتويات:
-          - ✅ تطبيق Windows Desktop
-          - ✅ Backend Server
-          - ✅ قاعدة بيانات 50 قارئ
-          - ✅ جميع المكتبات المطلوبة
-          
-          ## المتطلبات:
-          - Windows 10 أو أحدث
-          - لا حاجة لتثبيت أي شيء آخر!
+          # Quran Reciter ID - Windows Desktop
+          حمّل الـ ZIP، فك الضغط، وشغّل START.bat
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
