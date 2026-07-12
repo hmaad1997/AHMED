@@ -32,6 +32,8 @@ class IdentificationResult(BaseModel):
     image_url: str
     recitation_style: str
     similarity_score: float = Field(..., description="Raw cosine similarity score")
+    is_unknown: bool = False
+    top_matches: List[dict] = []
     
     class Config:
         json_schema_extra = {
