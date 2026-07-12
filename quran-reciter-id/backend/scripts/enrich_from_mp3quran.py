@@ -170,6 +170,80 @@ def quranapi_reciters() -> list[dict]:
         return []
 
 
+
+
+# ---------- Source: alquran.cloud (via cdn.islamic.network) ----------
+
+ALQURAN_EDITIONS = "https://api.alquran.cloud/v1/edition?format=audio&type=versebyverse"
+
+def alquran_reciters() -> list[dict]:
+    try:
+        d = requests.get(ALQURAN_EDITIONS, headers=HEADERS, timeout=TIMEOUT).json()
+        return d.get("data", []) if isinstance(d, dict) else []
+    except Exception:
+        return []
+
+def alquran_samples(reciter: dict) -> Iterable[tuple[str, str]]:
+    ident = reciter.get("identifier")
+    if not ident:
+        return
+    # ayah numbers 1 (Al-Fatiha 1), 8 (Al-Fatiha), 293 (Al-Baqarah 286 end -> ~286), varied
+    for ayah in (1, 8, 293, 1000, 2000):
+        for br in (128, 64):
+            yield f"https://cdn.islamic.network/quran/audio/{br}/{ident}/{ayah}.mp3", f"alquran_{ident}_{ayah}"
+
+# ---------- Source: quranicaudio.com ----------
+
+QURANICAUDIO_API = "https://quranicaudio.com/api/qaris"
+
+def quranicaudio_reciters() -> list[dict]:
+    try:
+        d = requests.get(QURANICAUDIO_API, headers=HEADERS, timeout=TIMEOUT).json()
+        return d if isinstance(d, list) else []
+    except Exception:
+        return []
+
+def quranicaudio_samples(reciter: dict) -> Iterable[tuple[str, str]]:
+    rel = reciter.get("relative_path") or ""
+    if not rel:
+        return
+    rel = rel.rstrip("/") + "/"
+    for surah in (1, 36, 55, 67, 112):
+        yield f"https://download.quranicaudio.com/quran/{rel}{surah:03d}.mp3", f"qa_{surah}"
+
+# ---------- Source: islamic.network mirror aliases ----------
+# Many extra reciters are keyed as ar.<slug> on cdn.islamic.network but not in alquran.cloud editions.
+# Try a curated list of well-known identifiers not always returned by /edition.
+EXTRA_ISLAMIC_NETWORK = [
+    ("ar.abdurrahmaansudais", "عبد الرحمن السديس"),
+    ("ar.saudalshuraim", "سعود الشريم"),
+    ("ar.mahermuaiqly", "ماهر المعيقلي"),
+    ("ar.hanirifai", "هاني الرفاعي"),
+    ("ar.abdulsamad", "عبد الباسط عبد الصمد"),
+    ("ar.minshawi", "محمد صديق المنشاوي"),
+    ("ar.husary", "محمود خليل الحصري"),
+    ("ar.husarymujawwad", "محمود خليل الحصري (مجود)"),
+    ("ar.aymanswoaid", "أيمن سويد"),
+    ("ar.hudhaify", "علي بن عبد الرحمن الحذيفي"),
+    ("ar.ibrahimakhbar", "إبراهيم الأخضر"),
+    ("ar.mohammadayyoub", "محمد أيوب"),
+    ("ar.muhammadjibreel", "محمد جبريل"),
+    ("ar.parhizgar", "شهریار پرهیزگار"),
+    ("ar.shaatree", "أبو بكر الشاطري"),
+    ("ar.ahmedajamy", "أحمد بن علي العجمي"),
+    ("ar.aymansweid", "أيمن سويد"),
+    ("ar.abdulbasitmurattal", "عبد الباسط عبد الصمد (مرتل)"),
+]
+
+def extra_islamic_network_reciters() -> list[dict]:
+    return [{"identifier": ident, "name_ar": ar} for ident, ar in EXTRA_ISLAMIC_NETWORK]
+
+def extra_islamic_network_samples(reciter: dict) -> Iterable[tuple[str, str]]:
+    ident = reciter["identifier"]
+    for ayah in (1, 8, 293, 1000, 2000):
+        yield f"https://cdn.islamic.network/quran/audio/128/{ident}/{ayah}.mp3", f"in_{ayah}"
+
+
 # ---------- Matching ----------
 
 def similar(a: str, b: str) -> float:
@@ -240,6 +314,27 @@ def main() -> int:
         rid = f"eay_{normalize(name_ar).replace(' ', '_')}"[:60]
         process(name_ar, rid, everyayah_samples(r), "everyayah.com")
 
+
+    # 3) alquran.cloud (verse-by-verse editions, served via cdn.islamic.network)
+    log("Source: alquran.cloud / cdn.islamic.network")
+    for r in alquran_reciters():
+        name_ar = r.get("name") or r.get("englishName") or ""
+        rid = f"aq_{r.get('identifier','').replace('.', '_')}"
+        process(name_ar, rid, alquran_samples(r), "alquran.cloud")
+
+    # 4) quranicaudio.com
+    log("Source: quranicaudio.com")
+    for r in quranicaudio_reciters():
+        name_ar = r.get("arabic_name") or r.get("name") or ""
+        rid = f"qa_{normalize(r.get('name','')).replace(' ', '_')}"[:60]
+        process(name_ar, rid, quranicaudio_samples(r), "quranicaudio.com")
+
+    # 5) Extra curated islamic.network identifiers
+    log("Source: islamic.network (curated extras)")
+    for r in extra_islamic_network_reciters():
+        rid = f"in_{r['identifier'].replace('.', '_')}"
+        process(r["name_ar"], rid, extra_islamic_network_samples(r), "islamic.network")
+
     save_json(DB_PATH, db)
     save_json(NAMES_PATH, names)
     log(f"Done. Tried {tried} new reciters, added {added}. Total DB: {len(db['reciters'])}")
@@ -252,3 +347,4 @@ if __name__ == "__main__":
     except Exception as e:
         log(f"FATAL: {e}")
         sys.exit(0)  # never fail the build
+
