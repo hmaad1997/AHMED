@@ -25,10 +25,15 @@ jobs:
       - name: Pre-download SpeechBrain model (bundle inside EXE)
         run: |
           python -c "from speechbrain.pretrained import EncoderClassifier; EncoderClassifier.from_hparams(source='speechbrain/spkrec-ecapa-voxceleb', savedir='pretrained_models/spkrec-ecapa-voxceleb')"
+      - name: Ensure data folder exists
+        run: |
+          if (!(Test-Path data)) { New-Item -ItemType Directory -Path data | Out-Null }
       - name: Build EXE (windowed, no CMD)
         run: |
           pyinstaller --onefile --noconsole --name QuranReciterID `
             --add-data "pretrained_models;pretrained_models" `
+            --add-data "app/static;app/static" `
+            --add-data "data;data" `
             --collect-all app `
             --collect-all speechbrain --collect-all librosa `
             --collect-all faiss --collect-data sklearn `
