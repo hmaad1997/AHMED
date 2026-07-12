@@ -1,62 +1,56 @@
-import sys, threading, time, socket, traceback, os
+import os,sys,time,threading,traceback,faulthandler,webbrowser,urllib.request
 from pathlib import Path
-sys.path.insert(0, str(Path(getattr(sys, "_MEIPASS", Path(__file__).parent))))
-import uvicorn, webview
-
-E = {"e": None}
-BASE = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
-LOGO = (BASE / "app" / "static" / "logo.jpg").as_uri()
-
-def wait_port(port, timeout=900):
-    start = time.time()
-    while time.time() - start < timeout:
-        if E["e"]:
-            return False
+A=Path(os.environ.get("APPDATA") or Path.home())/"QuranReciterID";A.mkdir(parents=True,exist_ok=True)
+L=A/"launcher.log"
+try:
+    _f=open(L,"a",buffering=1,encoding="utf-8");sys.stdout=_f;sys.stderr=_f
+except Exception:
+    _f=None
+faulthandler.enable(file=_f or sys.__stderr__)
+print(f"[boot] {time.strftime('%F %T')} frozen={getattr(sys,'frozen',0)} meipass={getattr(sys,'_MEIPASS','-')}",flush=True)
+B=Path(getattr(sys,"_MEIPASS",Path(__file__).resolve().parent));sys.path.insert(0,str(B))
+E={"e":None};P=8000
+def wait(t=900):
+    s=time.time()
+    while time.time()-s<t:
+        if E["e"]:return False
         try:
-            with socket.create_connection(("127.0.0.1", port), timeout=1):
-                return True
-        except OSError:
-            time.sleep(0.5)
+            r=urllib.request.urlopen(f"http://127.0.0.1:{P}/health",timeout=2)
+            if r.status==200:return True
+        except Exception:time.sleep(0.5)
     return False
-
-def run_server():
+def srv():
     try:
-        log_path = os.environ.get("QRI_LOG_FILE")
-        if log_path:
-            import logging
-            logging.basicConfig(filename=log_path, level=logging.INFO, encoding="utf-8")
+        import uvicorn
         from app.main import app
-        uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")
-    except Exception:
-        E["e"] = traceback.format_exc()
-
-def on_start(window):
-    if wait_port(8000):
-        window.load_url("http://127.0.0.1:8000/")
-    else:
-        import html as _html
-        msg = _html.escape(E["e"] or "Server did not start in time")
-        window.load_html(
-            "<body style='background:#2a1414;color:#fff;font-family:Segoe UI;padding:20px'>"
-            "<h2>خطأ في تشغيل الخادم</h2><pre style='white-space:pre-wrap'>" + msg + "</pre></body>"
-        )
-
-if __name__ == "__main__":
-    if os.environ.get("QRI_HEADLESS") == "1":
-        run_server()
-        raise SystemExit(0)
-    threading.Thread(target=run_server, daemon=True).start()
-    splash = f"""<body style='margin:0;background:radial-gradient(1000px 700px at 80% -10%,#0f5349 0,#021a19 70%);
-    color:#eef4ea;font-family:"Segoe UI",Tahoma,sans-serif;display:flex;align-items:center;
-    justify-content:center;height:100vh;direction:rtl'>
-    <div style='text-align:center'>
-    <img src='{LOGO}' style='width:120px;height:120px;border-radius:50%;object-fit:cover;
-    box-shadow:0 0 0 3px #d9b35c,0 0 40px #d9b35c66;margin-bottom:22px'>
-    <h1 style='color:#f0d78c;margin:0 0 6px;font-size:38px;font-family:"Traditional Arabic",serif'>من القارئ</h1>
-    <p style='color:#a9b8b6;margin:0 0 22px'>جارٍ تحميل النموذج الذكي…</p>
-    <div style='margin:0 auto;width:44px;height:44px;border:3px solid #083c39;
-    border-top-color:#d9b35c;border-radius:50%;animation:s 1s linear infinite'></div>
-    </div><style>@keyframes s{{to{{transform:rotate(360deg)}}}}</style></body>"""
-    win = webview.create_window("من القارئ", html=splash,
-        width=1200, height=820, min_size=(900, 640))
-    webview.start(on_start, win)
+        uvicorn.run(app,host="127.0.0.1",port=P,log_level="info",log_config=None)
+    except SystemExit:raise
+    except BaseException:
+        E["e"]=traceback.format_exc();print("[CRASH]\n"+E["e"],flush=True)
+def ui():
+    u=f"http://127.0.0.1:{P}/"
+    try:
+        import webview
+        LOGO=(B/"app"/"static"/"logo.jpg").as_uri()
+        s=f"<body style='margin:0;background:#021a19;color:#f0d78c;display:flex;align-items:center;justify-content:center;height:100vh;direction:rtl;font-family:Segoe UI'><div style='text-align:center'><img src='{LOGO}' style='width:120px;height:120px;border-radius:50%;box-shadow:0 0 0 3px #d9b35c'><h1>من القارئ</h1><p style='color:#a9b8b6'>جارٍ التحميل…</p></div></body>"
+        w=webview.create_window("من القارئ",html=s,width=1200,height=820,min_size=(900,640))
+        def on(win):
+            if wait():win.load_url(u)
+            else:
+                import html;m=html.escape(E["e"] or "الخادم لم يستجب")
+                win.load_html(f"<body style='background:#2a1414;color:#fff;padding:20px;direction:rtl'><h2>خطأ</h2><p>Log: {L}</p><pre>{m}</pre></body>")
+        webview.start(on,w);print("[exit] webview closed",flush=True);os._exit(0)
+    except Exception as e:
+        print(f"[warn] webview: {e} → browser fallback",flush=True)
+        if wait():
+            try:webbrowser.open(u)
+            except Exception:pass
+        while True:time.sleep(3600)
+if __name__=="__main__":
+    try:
+        import multiprocessing;multiprocessing.freeze_support()
+    except Exception:pass
+    if os.environ.get("QRI_HEADLESS")=="1":
+        print("[headless] server in main thread",flush=True);srv();raise SystemExit(1 if E["e"] else 0)
+    threading.Thread(target=srv,name="uvicorn",daemon=False).start()
+    ui()
