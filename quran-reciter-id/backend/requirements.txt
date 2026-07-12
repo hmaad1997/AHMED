@@ -5,6 +5,7 @@ python-multipart==0.0.6
 
 # AI & Audio Processing
 speechbrain==0.5.16
+huggingface-hub==0.17.3
 torchaudio==2.1.0
 torch==2.1.0
 
