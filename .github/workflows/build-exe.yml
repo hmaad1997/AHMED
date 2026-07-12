@@ -25,6 +25,9 @@ jobs:
       - name: Pre-download SpeechBrain model (bundle inside EXE)
         run: |
           python -c "from speechbrain.pretrained import EncoderClassifier; EncoderClassifier.from_hparams(source='speechbrain/spkrec-ecapa-voxceleb', savedir='pretrained_models/spkrec-ecapa-voxceleb')"
+      - name: Build pretrained reciter database (364 famous reciters)
+        run: |
+          python scripts/build_pretrained_db.py
       - name: Ensure data folder exists
         run: |
           if (!(Test-Path data)) { New-Item -ItemType Directory -Path data | Out-Null }
