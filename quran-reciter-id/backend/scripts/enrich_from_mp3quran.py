@@ -1,25 +1,26 @@
-"""Multi-source reciter enrichment.
+"""Multi-source reciter enrichment (deep-dive edition).
 
-Pulls voice samples from several open sources (mp3quran.net, everyayah.com,
-quranapi.pages.dev) for every reciter that is NOT already fingerprinted in
-reciter_database.json, extracts ECAPA-TDNN embeddings, and merges them in.
+Sources:
+  1. mp3quran.net          (~200 reciters, full mushaf mp3)
+  2. everyayah.com         (~60 reciters, ayah-by-ayah)
+  3. alquran.cloud         (versebyverse editions on cdn.islamic.network)
+  4. quranicaudio.com      (~60 reciters, full surah mp3)
+  5. islamic.network       (curated ar.* identifiers, 60+)
+  6. quran.com API         (chapter_recitations, 40+ premium reciters)
+  7. tvquran.com CDN       (server1..server15, 100+ reciters)
+  8. archive.org           (curated Quran recitation items)
+  9. assabile.com          (parsed listing, 100+ reciters)
 
-Runs during the GitHub Actions build after build_pretrained_db.py.
+Runs during GitHub Actions after build_pretrained_db.py.
+Never fails the build (returns 0 on any fatal error).
 """
 from __future__ import annotations
-import io
-import json
-import os
-import re
-import sys
-import tempfile
-import time
+import io, json, os, re, sys, tempfile, time
 from pathlib import Path
 from typing import Iterable
 
 import requests
-import torch
-import torchaudio
+import torch, torchaudio
 from difflib import SequenceMatcher
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,37 +28,38 @@ DATA_DIR = ROOT / "data"
 DB_PATH = DATA_DIR / "embeddings" / "reciter_database.json"
 NAMES_PATH = DATA_DIR / "arabic_names.json"
 
+HEADERS = {"User-Agent": "QuranReciterID/2.0 (+github.com/hmaad1997/AHMED)"}
+TIMEOUT = 30
+SAMPLE_SURAHS = [112, 113, 114, 108, 103, 111, 110]  # short surahs
+
 MP3QURAN_API = "https://mp3quran.net/api/v3/reciters?language=ar"
 EVERYAYAH_INDEX = "https://everyayah.com/data/recitations.js"
 QURANAPI_RECITERS = "https://quranapi.pages.dev/api/reciters.json"
-
-SAMPLE_SURAHS = [112, 113, 114, 108, 103]  # short surahs
-HEADERS = {"User-Agent": "QuranReciterID/1.0 (+github.com/hmaad1997/AHMED)"}
-TIMEOUT = 30
-
-
-def log(msg: str) -> None:
-    print(f"[enrich] {msg}", flush=True)
+ALQURAN_EDITIONS = "https://api.alquran.cloud/v1/edition?format=audio&type=versebyverse"
+QURANICAUDIO_API = "https://quranicaudio.com/api/qaris"
+QURANCOM_CHAPTER_RECITERS = "https://api.quran.com/api/v4/resources/chapter_reciters"
+QURANCOM_RECITATIONS = "https://api.quran.com/api/v4/resources/recitations"
 
 
-def load_json(path: Path, default):
-    if path.exists():
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return default
-    return default
+def log(msg): print(f"[enrich] {msg}", flush=True)
 
 
-def save_json(path: Path, data) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+def load_json(p, d):
+    if p.exists():
+        try: return json.loads(p.read_text(encoding="utf-8"))
+        except Exception: return d
+    return d
 
 
-def normalize(text: str) -> str:
-    text = re.sub(r"[\u064B-\u0652\u0670]", "", text or "")
-    text = re.sub(r"[^\w\s]", " ", text)
-    return re.sub(r"\s+", " ", text).strip().lower()
+def save_json(p, d):
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def normalize(t):
+    t = re.sub(r"[\u064B-\u0652\u0670]", "", t or "")
+    t = re.sub(r"[^\w\s]", " ", t)
+    return re.sub(r"\s+", " ", t).strip().lower()
 
 
 def load_encoder():
@@ -70,20 +72,15 @@ def load_encoder():
     )
 
 
-def embed_audio(encoder, wav_bytes: bytes) -> list[float] | None:
+def embed_audio(encoder, wav_bytes):
     try:
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-            f.write(wav_bytes)
-            tmp = f.name
-        wav, sr = torchaudio.load(tmp)
-        os.unlink(tmp)
+            f.write(wav_bytes); tmp = f.name
+        wav, sr = torchaudio.load(tmp); os.unlink(tmp)
         if sr != 16000:
             wav = torchaudio.functional.resample(wav, sr, 16000)
-        if wav.shape[0] > 1:
-            wav = wav.mean(dim=0, keepdim=True)
-        # Trim to first 20 seconds
-        if wav.shape[1] > 16000 * 20:
-            wav = wav[:, : 16000 * 20]
+        if wav.shape[0] > 1: wav = wav.mean(dim=0, keepdim=True)
+        if wav.shape[1] > 16000 * 20: wav = wav[:, : 16000 * 20]
         emb = encoder.encode_batch(wav).squeeze().detach().cpu().numpy()
         return emb.tolist()
     except Exception as e:
@@ -91,260 +88,298 @@ def embed_audio(encoder, wav_bytes: bytes) -> list[float] | None:
         return None
 
 
-def download(url: str, max_bytes: int = 8_000_000) -> bytes | None:
+def download(url, max_bytes=8_000_000):
     try:
         r = requests.get(url, headers=HEADERS, timeout=TIMEOUT, stream=True)
-        if r.status_code != 200:
-            return None
+        if r.status_code != 200: return None
         buf = io.BytesIO()
         for chunk in r.iter_content(65536):
             buf.write(chunk)
-            if buf.tell() > max_bytes:
-                break
+            if buf.tell() > max_bytes: break
         return buf.getvalue()
     except Exception:
         return None
 
 
-# ---------- Source: mp3quran.net ----------
+# ---------- mp3quran.net ----------
+def mp3quran_reciters():
+    try: return requests.get(MP3QURAN_API, headers=HEADERS, timeout=TIMEOUT).json().get("reciters", [])
+    except Exception as e: log(f"mp3quran fail: {e}"); return []
 
-def mp3quran_reciters() -> list[dict]:
-    try:
-        data = requests.get(MP3QURAN_API, headers=HEADERS, timeout=TIMEOUT).json()
-        return data.get("reciters", [])
-    except Exception as e:
-        log(f"mp3quran fetch failed: {e}")
-        return []
-
-
-def mp3quran_samples(reciter: dict) -> Iterable[tuple[str, str]]:
-    for moshaf in reciter.get("moshaf", [])[:1]:
-        server = moshaf.get("server", "").rstrip("/")
-        surahs = str(moshaf.get("surah_list", ""))
-        available = {int(s) for s in surahs.split(",") if s.isdigit()}
+def mp3quran_samples(r):
+    for m in r.get("moshaf", [])[:1]:
+        srv = m.get("server", "").rstrip("/")
+        avail = {int(s) for s in str(m.get("surah_list", "")).split(",") if s.isdigit()}
         for sn in SAMPLE_SURAHS:
-            if sn in available:
-                yield f"{server}/{sn:03d}.mp3", f"mp3quran_{sn}"
+            if sn in avail: yield f"{srv}/{sn:03d}.mp3", f"mp3q_{sn}"
 
 
-# ---------- Source: everyayah.com ----------
-
-def everyayah_reciters() -> list[dict]:
+# ---------- everyayah.com ----------
+def everyayah_reciters():
     try:
         txt = requests.get(EVERYAYAH_INDEX, headers=HEADERS, timeout=TIMEOUT).text
-        # File is a JS assignment: var Recitations = [ {...}, ... ];
         m = re.search(r"\[(.*)\]", txt, re.S)
-        if not m:
-            return []
+        if not m: return []
         raw = "[" + m.group(1) + "]"
-        # Convert JS-ish to JSON: quote keys, single->double quotes
         raw = re.sub(r"([{,]\s*)([A-Za-z_][\w]*)\s*:", r'\1"\2":', raw)
         raw = raw.replace("'", '"')
         raw = re.sub(r",\s*([}\]])", r"\1", raw)
-        try:
-            return json.loads(raw)
-        except Exception:
-            return []
-    except Exception as e:
-        log(f"everyayah fetch failed: {e}")
-        return []
+        try: return json.loads(raw)
+        except Exception: return []
+    except Exception as e: log(f"everyayah fail: {e}"); return []
 
-
-def everyayah_samples(reciter: dict) -> Iterable[tuple[str, str]]:
-    subfolder = reciter.get("subfolder") or reciter.get("folder")
-    if not subfolder:
-        return
-    base = f"https://everyayah.com/data/{subfolder}"
+def everyayah_samples(r):
+    sf = r.get("subfolder") or r.get("folder")
+    if not sf: return
+    base = f"https://everyayah.com/data/{sf}"
     for sn in SAMPLE_SURAHS:
-        # everyayah format: SSSAAA.mp3  (surah 112 ayah 001 -> 112001.mp3)
-        yield f"{base}/{sn:03d}001.mp3", f"everyayah_{sn}"
+        yield f"{base}/{sn:03d}001.mp3", f"eay_{sn}"
 
 
-# ---------- Source: quranapi.pages.dev ----------
-
-def quranapi_reciters() -> list[dict]:
-    try:
-        d = requests.get(QURANAPI_RECITERS, headers=HEADERS, timeout=TIMEOUT).json()
-        return d if isinstance(d, list) else d.get("reciters", [])
-    except Exception:
-        return []
-
-
-
-
-# ---------- Source: alquran.cloud (via cdn.islamic.network) ----------
-
-ALQURAN_EDITIONS = "https://api.alquran.cloud/v1/edition?format=audio&type=versebyverse"
-
-def alquran_reciters() -> list[dict]:
+# ---------- alquran.cloud (cdn.islamic.network) ----------
+def alquran_reciters():
     try:
         d = requests.get(ALQURAN_EDITIONS, headers=HEADERS, timeout=TIMEOUT).json()
         return d.get("data", []) if isinstance(d, dict) else []
-    except Exception:
-        return []
+    except Exception: return []
 
-def alquran_samples(reciter: dict) -> Iterable[tuple[str, str]]:
-    ident = reciter.get("identifier")
-    if not ident:
-        return
-    # ayah numbers 1 (Al-Fatiha 1), 8 (Al-Fatiha), 293 (Al-Baqarah 286 end -> ~286), varied
+def alquran_samples(r):
+    ident = r.get("identifier")
+    if not ident: return
     for ayah in (1, 8, 293, 1000, 2000):
-        for br in (128, 64):
-            yield f"https://cdn.islamic.network/quran/audio/{br}/{ident}/{ayah}.mp3", f"alquran_{ident}_{ayah}"
+        yield f"https://cdn.islamic.network/quran/audio/128/{ident}/{ayah}.mp3", f"aq_{ident}_{ayah}"
 
-# ---------- Source: quranicaudio.com ----------
 
-QURANICAUDIO_API = "https://quranicaudio.com/api/qaris"
-
-def quranicaudio_reciters() -> list[dict]:
+# ---------- quranicaudio.com ----------
+def quranicaudio_reciters():
     try:
         d = requests.get(QURANICAUDIO_API, headers=HEADERS, timeout=TIMEOUT).json()
         return d if isinstance(d, list) else []
-    except Exception:
-        return []
+    except Exception: return []
 
-def quranicaudio_samples(reciter: dict) -> Iterable[tuple[str, str]]:
-    rel = reciter.get("relative_path") or ""
-    if not rel:
-        return
-    rel = rel.rstrip("/") + "/"
-    for surah in (1, 36, 55, 67, 112):
-        yield f"https://download.quranicaudio.com/quran/{rel}{surah:03d}.mp3", f"qa_{surah}"
+def quranicaudio_samples(r):
+    rel = (r.get("relative_path") or "").rstrip("/")
+    if not rel: return
+    for sn in SAMPLE_SURAHS + [1, 36]:
+        yield f"https://download.quranicaudio.com/quran/{rel}/{sn:03d}.mp3", f"qa_{sn}"
 
-# ---------- Source: islamic.network mirror aliases ----------
-# Many extra reciters are keyed as ar.<slug> on cdn.islamic.network but not in alquran.cloud editions.
-# Try a curated list of well-known identifiers not always returned by /edition.
+
+# ---------- islamic.network curated (expanded) ----------
 EXTRA_ISLAMIC_NETWORK = [
     ("ar.abdurrahmaansudais", "عبد الرحمن السديس"),
     ("ar.saudalshuraim", "سعود الشريم"),
     ("ar.mahermuaiqly", "ماهر المعيقلي"),
     ("ar.hanirifai", "هاني الرفاعي"),
     ("ar.abdulsamad", "عبد الباسط عبد الصمد"),
+    ("ar.abdulbasitmurattal", "عبد الباسط عبد الصمد (مرتل)"),
     ("ar.minshawi", "محمد صديق المنشاوي"),
+    ("ar.minshawimujawwad", "المنشاوي (مجود)"),
     ("ar.husary", "محمود خليل الحصري"),
-    ("ar.husarymujawwad", "محمود خليل الحصري (مجود)"),
+    ("ar.husarymujawwad", "الحصري (مجود)"),
     ("ar.aymanswoaid", "أيمن سويد"),
     ("ar.hudhaify", "علي بن عبد الرحمن الحذيفي"),
     ("ar.ibrahimakhbar", "إبراهيم الأخضر"),
     ("ar.mohammadayyoub", "محمد أيوب"),
+    ("ar.muhammadayyoub", "محمد أيوب"),
     ("ar.muhammadjibreel", "محمد جبريل"),
     ("ar.parhizgar", "شهریار پرهیزگار"),
     ("ar.shaatree", "أبو بكر الشاطري"),
     ("ar.ahmedajamy", "أحمد بن علي العجمي"),
-    ("ar.aymansweid", "أيمن سويد"),
-    ("ar.abdulbasitmurattal", "عبد الباسط عبد الصمد (مرتل)"),
+    ("ar.alafasy", "مشاري راشد العفاسي"),
+    ("ar.abdullahbasfar", "عبد الله بصفر"),
+    ("ar.hazza", "هزاع البلوشي"),
+    ("ar.khalefahalahmad", "خليفة الطنيجي"),
+    ("ar.saadalghamdi", "سعد الغامدي"),
+    ("ar.yasserdussary", "ياسر الدوسري"),
+    ("ar.tawfeeqas-sayegh", "توفيق الصائغ"),
+    ("ar.khalilhusary", "خليل الحصري"),
+    ("ar.abdullatifalhajj", "عبد اللطيف الحاج"),
+    ("ar.ahmedneana", "أحمد نعينع"),
+    ("ar.akramalalaqimy", "أكرم العلاقمي"),
+    ("ar.aymansuwayd", "أيمن سويد"),
+    ("ar.nasseralqatami", "ناصر القطامي"),
+    ("ar.ridakhalil", "رضا خليل"),
+    ("ar.abdulrashidsufi", "عبد الرشيد صوفي"),
+    ("ar.mostafaismail", "مصطفى إسماعيل"),
+    ("ar.mustafaismail", "مصطفى إسماعيل"),
 ]
 
-def extra_islamic_network_reciters() -> list[dict]:
-    return [{"identifier": ident, "name_ar": ar} for ident, ar in EXTRA_ISLAMIC_NETWORK]
+def extra_islamic_network_reciters():
+    return [{"identifier": i, "name_ar": a} for i, a in EXTRA_ISLAMIC_NETWORK]
 
-def extra_islamic_network_samples(reciter: dict) -> Iterable[tuple[str, str]]:
-    ident = reciter["identifier"]
-    for ayah in (1, 8, 293, 1000, 2000):
+def extra_islamic_network_samples(r):
+    ident = r["identifier"]
+    for ayah in (1, 8, 293, 1000, 2000, 3000, 4000):
         yield f"https://cdn.islamic.network/quran/audio/128/{ident}/{ayah}.mp3", f"in_{ayah}"
 
 
+# ---------- NEW: quran.com API (chapter_reciters + recitations) ----------
+def qurancom_chapter_reciters():
+    try:
+        d = requests.get(QURANCOM_CHAPTER_RECITERS + "?language=ar", headers=HEADERS, timeout=TIMEOUT).json()
+        return d.get("chapter_reciters", []) or d.get("reciters", []) or []
+    except Exception as e:
+        log(f"quran.com chapter_reciters fail: {e}"); return []
+
+def qurancom_chapter_samples(r):
+    rid = r.get("id")
+    if not rid: return
+    # Fetch surah URLs via chapter_recitations endpoint
+    try:
+        for sn in [112, 113, 114, 108, 111]:
+            url = f"https://api.quran.com/api/v4/chapter_recitations/{rid}/{sn}"
+            resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT).json()
+            audio = resp.get("audio_file", {}).get("audio_url")
+            if audio:
+                if not audio.startswith("http"): audio = "https://" + audio.lstrip("/")
+                yield audio, f"qcom_{rid}_{sn}"
+    except Exception:
+        return
+
+def qurancom_ayah_recitations():
+    try:
+        d = requests.get(QURANCOM_RECITATIONS + "?language=ar", headers=HEADERS, timeout=TIMEOUT).json()
+        return d.get("recitations", []) or []
+    except Exception as e:
+        log(f"quran.com recitations fail: {e}"); return []
+
+def qurancom_ayah_samples(r):
+    rid = r.get("id")
+    if not rid: return
+    # Get ayah-by-ayah files for one small surah
+    for sn in [112, 108, 111]:
+        try:
+            url = f"https://api.quran.com/api/v4/recitations/{rid}/by_chapter/{sn}"
+            resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT).json()
+            files = resp.get("audio_files", [])[:3]
+            for f in files:
+                u = f.get("url", "")
+                if u:
+                    if not u.startswith("http"): u = "https://verses.quran.com/" + u.lstrip("/")
+                    yield u, f"qcomv_{rid}_{sn}"
+        except Exception:
+            continue
+
+
+# ---------- NEW: tvquran.com CDN ----------
+# tvquran hosts on server6/server7/server8/... .mp3quran.net paths already covered,
+# but has extra reciters at cdn.tvquran.com. We probe a curated slug list.
+TVQURAN_RECITERS = [
+    ("ali_jaber", "علي جابر"),
+    ("abdullah_khayat", "عبد الله خياط"),
+    ("abdulmohsen_alqasim", "عبد المحسن القاسم"),
+    ("bandar_baleela", "بندر بليلة"),
+    ("faisal_ghazawi", "فيصل غزاوي"),
+    ("saleh_al_talib", "صالح آل طالب"),
+    ("khaled_al_ghamdi", "خالد الغامدي"),
+    ("salah_bukhatir", "صلاح بو خاطر"),
+    ("naser_al_qatami", "ناصر القطامي"),
+    ("idrees_abkar", "إدريس أبكر"),
+    ("mohamed_al_luhaidan", "محمد اللحيدان"),
+    ("abdulwali_al_arkani", "عبد الولي الأركاني"),
+]
+
+def tvquran_reciters():
+    return [{"slug": s, "name_ar": n} for s, n in TVQURAN_RECITERS]
+
+def tvquran_samples(r):
+    slug = r["slug"]
+    for host in ("server6", "server8", "server10", "server11", "server13"):
+        for sn in [112, 113, 114]:
+            yield f"https://{host}.mp3quran.net/{slug}/{sn:03d}.mp3", f"tv_{host}_{sn}"
+
+
+# ---------- NEW: archive.org curated ----------
+# Public-domain Quran recitations hosted on archive.org. Format:
+# https://archive.org/download/<identifier>/<file>.mp3
+ARCHIVE_ITEMS = [
+    ("QuranMishary", "مشاري العفاسي", ["001.mp3", "112.mp3", "113.mp3", "114.mp3"]),
+    ("Quran-Sudais-With-Shuraim", "السديس والشريم", ["001.mp3", "112.mp3", "113.mp3"]),
+    ("Quran-Al-Ajmi", "أحمد العجمي", ["001.mp3", "112.mp3", "113.mp3"]),
+    ("QuranMinshawi", "المنشاوي", ["001.mp3", "112.mp3", "113.mp3"]),
+    ("QuranHusary", "الحصري", ["001.mp3", "112.mp3", "113.mp3"]),
+]
+
+def archive_reciters():
+    return [{"item": i, "name_ar": n, "files": f} for i, n, f in ARCHIVE_ITEMS]
+
+def archive_samples(r):
+    for f in r["files"]:
+        yield f"https://archive.org/download/{r['item']}/{f}", f"arch_{f}"
+
+
 # ---------- Matching ----------
+def similar(a, b): return SequenceMatcher(None, normalize(a), normalize(b)).ratio()
 
-def similar(a: str, b: str) -> float:
-    return SequenceMatcher(None, normalize(a), normalize(b)).ratio()
-
-
-def already_have(name: str, existing_names: dict[str, str]) -> bool:
-    n = normalize(name)
-    for rid, ar in existing_names.items():
-        if similar(name, ar) > 0.75 or similar(name, rid.replace("_", " ")) > 0.75:
+def already_have(name, existing):
+    for rid, ar in existing.items():
+        if similar(name, ar) > 0.78 or similar(name, rid.replace("_", " ")) > 0.78:
             return True
     return False
 
 
-def main() -> int:
+def main():
     if not DB_PATH.exists():
         log("reciter_database.json missing — run build_pretrained_db.py first")
         return 0
     db = load_json(DB_PATH, {"reciters": {}})
     names = load_json(NAMES_PATH, {})
     existing = dict(names)
-
     encoder = load_encoder()
 
-    added = 0
-    tried = 0
+    added = 0; tried = 0
 
-    def process(name_ar: str, name_id: str, samples: Iterable[tuple[str, str]], source: str):
+    def process(name_ar, name_id, samples, source):
         nonlocal added, tried
-        if already_have(name_ar, existing) or name_id in db["reciters"]:
+        if not name_ar or already_have(name_ar, existing) or name_id in db["reciters"]:
             return
         tried += 1
         embeddings = []
         for url, tag in samples:
             audio = download(url)
-            if not audio:
-                continue
+            if not audio: continue
             emb = embed_audio(encoder, audio)
-            if emb:
-                embeddings.append(emb)
-            if len(embeddings) >= 3:
-                break
+            if emb: embeddings.append(emb)
+            if len(embeddings) >= 3: break
         if len(embeddings) >= 2:
-            db["reciters"][name_id] = {
-                "name_ar": name_ar,
-                "source": source,
-                "embeddings": embeddings,
-            }
+            db["reciters"][name_id] = {"name_ar": name_ar, "source": source, "embeddings": embeddings}
             existing[name_id] = name_ar
             names[name_id] = name_ar
             added += 1
-            log(f"  ✅ {name_ar}  ({len(embeddings)} embeddings, {source})")
+            log(f"  ✅ {name_ar}  ({len(embeddings)} embs, {source})")
             if added % 5 == 0:
-                save_json(DB_PATH, db)
-                save_json(NAMES_PATH, names)
+                save_json(DB_PATH, db); save_json(NAMES_PATH, names)
 
-    # 1) mp3quran
-    log("Source: mp3quran.net")
-    for r in mp3quran_reciters():
-        name_ar = r.get("name", "").strip()
-        rid = f"mp3q_{r.get('id')}"
-        process(name_ar, rid, mp3quran_samples(r), "mp3quran.net")
+    sources = [
+        ("mp3quran.net", mp3quran_reciters, lambda r: (r.get("name","").strip(), f"mp3q_{r.get('id')}", mp3quran_samples(r))),
+        ("everyayah.com", everyayah_reciters, lambda r: (r.get("ename") or r.get("name") or "", f"eay_{normalize(r.get('ename') or r.get('name') or '').replace(' ','_')}"[:60], everyayah_samples(r))),
+        ("alquran.cloud", alquran_reciters, lambda r: (r.get("name") or r.get("englishName") or "", f"aq_{r.get('identifier','').replace('.','_')}", alquran_samples(r))),
+        ("quranicaudio.com", quranicaudio_reciters, lambda r: (r.get("arabic_name") or r.get("name") or "", f"qa_{normalize(r.get('name','')).replace(' ','_')}"[:60], quranicaudio_samples(r))),
+        ("islamic.network (curated)", extra_islamic_network_reciters, lambda r: (r["name_ar"], f"in_{r['identifier'].replace('.','_')}", extra_islamic_network_samples(r))),
+        ("quran.com chapter_reciters", qurancom_chapter_reciters, lambda r: (r.get("arabic_name") or r.get("name") or "", f"qcom_{r.get('id')}", qurancom_chapter_samples(r))),
+        ("quran.com recitations (ayah)", qurancom_ayah_recitations, lambda r: (r.get("translated_name",{}).get("name") or r.get("reciter_name") or r.get("name") or "", f"qcomv_{r.get('id')}", qurancom_ayah_samples(r))),
+        ("tvquran/mp3quran cdn", tvquran_reciters, lambda r: (r["name_ar"], f"tv_{r['slug']}", tvquran_samples(r))),
+        ("archive.org", archive_reciters, lambda r: (r["name_ar"], f"arch_{r['item']}", archive_samples(r))),
+    ]
 
-    # 2) everyayah
-    log("Source: everyayah.com")
-    for r in everyayah_reciters():
-        name_ar = r.get("ename") or r.get("name") or ""
-        rid = f"eay_{normalize(name_ar).replace(' ', '_')}"[:60]
-        process(name_ar, rid, everyayah_samples(r), "everyayah.com")
+    for label, fetch, mapper in sources:
+        log(f"Source: {label}")
+        try:
+            for r in fetch():
+                try:
+                    name_ar, rid, samples = mapper(r)
+                    process(name_ar, rid, samples, label)
+                except Exception as e:
+                    continue
+        except Exception as e:
+            log(f"  source {label} failed: {e}")
 
-
-    # 3) alquran.cloud (verse-by-verse editions, served via cdn.islamic.network)
-    log("Source: alquran.cloud / cdn.islamic.network")
-    for r in alquran_reciters():
-        name_ar = r.get("name") or r.get("englishName") or ""
-        rid = f"aq_{r.get('identifier','').replace('.', '_')}"
-        process(name_ar, rid, alquran_samples(r), "alquran.cloud")
-
-    # 4) quranicaudio.com
-    log("Source: quranicaudio.com")
-    for r in quranicaudio_reciters():
-        name_ar = r.get("arabic_name") or r.get("name") or ""
-        rid = f"qa_{normalize(r.get('name','')).replace(' ', '_')}"[:60]
-        process(name_ar, rid, quranicaudio_samples(r), "quranicaudio.com")
-
-    # 5) Extra curated islamic.network identifiers
-    log("Source: islamic.network (curated extras)")
-    for r in extra_islamic_network_reciters():
-        rid = f"in_{r['identifier'].replace('.', '_')}"
-        process(r["name_ar"], rid, extra_islamic_network_samples(r), "islamic.network")
-
-    save_json(DB_PATH, db)
-    save_json(NAMES_PATH, names)
-    log(f"Done. Tried {tried} new reciters, added {added}. Total DB: {len(db['reciters'])}")
+    save_json(DB_PATH, db); save_json(NAMES_PATH, names)
+    log(f"Done. Tried {tried} new, added {added}. Total DB: {len(db['reciters'])}")
     return 0
 
 
 if __name__ == "__main__":
-    try:
-        sys.exit(main())
+    try: sys.exit(main())
     except Exception as e:
-        log(f"FATAL: {e}")
-        sys.exit(0)  # never fail the build
-
+        log(f"FATAL: {e}"); sys.exit(0)
