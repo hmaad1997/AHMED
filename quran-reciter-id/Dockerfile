@@ -11,6 +11,8 @@ COPY backend/requirements.txt .
 RUN pip install --no-cache-dir torch==2.1.0+cpu torchaudio==2.1.0+cpu \
     -f https://download.pytorch.org/whl/torch_stable.html
 RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements-fingerprint.txt /tmp/req-fp.txt
+RUN pip install --no-cache-dir -r /tmp/req-fp.txt || true
 
 COPY backend/ .
 
@@ -28,4 +30,5 @@ EXPOSE 7860
 ENV PYTHONUTF8=1
 ENV HF_HOME=/home/user/app/models
 
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7860"]
+# Preload main_dual_patch to register /identify-dual on app.main.app
+CMD ["python", "-c", "import app.main_dual_patch; import uvicorn; uvicorn.run('app.main:app', host='0.0.0.0', port=7860)"]
