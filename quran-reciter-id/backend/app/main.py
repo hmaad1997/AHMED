@@ -32,6 +32,42 @@ if not STATIC_DIR.exists():
     STATIC_DIR = _BASE / "app" / "static"
 
 
+VIDEO_EXTS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".3gp", ".ts", ".mpeg", ".mpg"}
+CLIP_SECONDS = 40
+CLIP_OFFSET = 5  # skip intro
+
+def _ffmpeg_bin() -> str:
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return "ffmpeg"
+
+def _prepare_audio(src: Path, filename: str = "") -> Path:
+    """If src is a video (or long file), extract up to CLIP_SECONDS of mono 16k WAV.
+    Returns a path to the audio to analyze (may equal src)."""
+    ext = Path(filename or src.name).suffix.lower()
+    is_video = ext in VIDEO_EXTS
+    if not is_video:
+        return src
+    import subprocess
+    out = src.with_suffix(".extracted.wav")
+    cmd = [_ffmpeg_bin(), "-y", "-ss", str(CLIP_OFFSET), "-t", str(CLIP_SECONDS),
+           "-i", str(src), "-vn", "-ac", "1", "-ar", "16000",
+           "-f", "wav", str(out)]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
+    except subprocess.CalledProcessError as e:
+        # retry without offset (video shorter than 5s intro)
+        cmd2 = [_ffmpeg_bin(), "-y", "-t", str(CLIP_SECONDS), "-i", str(src),
+                "-vn", "-ac", "1", "-ar", "16000", "-f", "wav", str(out)]
+        try:
+            subprocess.run(cmd2, check=True, capture_output=True, timeout=120)
+        except Exception as e2:
+            raise HTTPException(400, f"تعذّر استخراج الصوت من الفيديو: {e2}") from e2
+    return out
+
+
 model_state = {"status": "starting", "error": "", "started_at": None, "ready_at": None}
 
 
@@ -132,10 +168,14 @@ async def identify_reciter(audio_file: UploadFile = File(...)):
     audio_bytes = await audio_file.read()
     with tempfile.NamedTemporaryFile(suffix=Path(audio_file.filename or "a.wav").suffix or ".wav", delete=False) as tmp:
         tmp.write(audio_bytes); tmp_path = Path(tmp.name)
+    extracted_path: Optional[Path] = None
     try:
-        if not ai_engine.validate_audio_duration(tmp_path, min_duration_sec=3.0):
+        analysis_path = _prepare_audio(tmp_path, audio_file.filename or "")
+        if analysis_path != tmp_path:
+            extracted_path = analysis_path
+        if not ai_engine.validate_audio_duration(analysis_path, min_duration_sec=3.0):
             raise HTTPException(400, "الملف قصير جداً — يجب أن يكون 3 ثوانٍ على الأقل")
-        q = ai_engine.process_audio_file(tmp_path).reshape(1, -1)
+        q = ai_engine.process_audio_file(analysis_path).reshape(1, -1)
         scored = sorted(
             ((n, float(cosine_similarity(q, v.reshape(1, -1))[0][0])) for n, v in vecs.items()),
             key=lambda x: x[1], reverse=True
@@ -184,8 +224,10 @@ async def identify_reciter(audio_file: UploadFile = File(...)):
             })
         return result
     finally:
-        try: tmp_path.unlink()
-        except Exception: pass
+        for p in (tmp_path, extracted_path):
+            if p:
+                try: p.unlink()
+                except Exception: pass
 
 
 @app.post("/reciters/add")
@@ -200,8 +242,24 @@ async def add_reciter(
         raise HTTPException(503, _model_not_ready_message())
     blobs, names = [], []
     for f in audio_files:
-        blobs.append(await f.read())
-        names.append(f.filename or "audio.wav")
+        raw = await f.read()
+        fname = f.filename or "audio.wav"
+        ext = Path(fname).suffix.lower()
+        if ext in VIDEO_EXTS:
+            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as vtmp:
+                vtmp.write(raw); vpath = Path(vtmp.name)
+            try:
+                apath = _prepare_audio(vpath, fname)
+                blobs.append(apath.read_bytes())
+                names.append(Path(fname).stem + ".wav")
+                try: apath.unlink()
+                except Exception: pass
+            finally:
+                try: vpath.unlink()
+                except Exception: pass
+        else:
+            blobs.append(raw)
+            names.append(fname)
     try:
         res = user_db.add_reciter(name, blobs, names, ai_engine, country=country, bio=bio)
     except ValueError as e:
@@ -256,3 +314,4 @@ async def gxh(request, exc):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+
