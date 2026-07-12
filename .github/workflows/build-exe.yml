@@ -5,9 +5,14 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  PYTHONIOENCODING: utf-8
+  PYTHONUTF8: '1'
+
 jobs:
   backend-exe:
     runs-on: windows-latest
+    timeout-minutes: 180
     defaults:
       run:
         working-directory: quran-reciter-id/backend
@@ -21,13 +26,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install --index-url https://download.pytorch.org/whl/cpu torch==2.1.0 torchaudio==2.1.0
           pip install -r requirements.txt
-          pip install pyinstaller pywebview openpyxl requests
+          pip install pyinstaller pywebview openpyxl requests tqdm
       - name: Pre-download SpeechBrain model
         run: |
           python -c "from speechbrain.pretrained import EncoderClassifier; EncoderClassifier.from_hparams(source='speechbrain/spkrec-ecapa-voxceleb', savedir='pretrained_models/spkrec-ecapa-voxceleb')"
       - name: Build pretrained reciter database (364 reciters)
+        continue-on-error: true
         run: python scripts/build_pretrained_db.py
-      - name: Enrich DB from open-source samples (mp3quran.net)
+      - name: Enrich DB from open-source samples (mp3quran.net + everyayah)
         continue-on-error: true
         run: python scripts/enrich_from_mp3quran.py
       - name: Ensure data folder exists
