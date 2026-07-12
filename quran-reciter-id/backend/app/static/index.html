@@ -127,11 +127,11 @@ label.field span{display:block;color:var(--muted);font-size:12px;margin-bottom:6
 <!-- IDENTIFY -->
 <section id="tab-id" class="card">
   <h2>ارفع تلاوة للتعرّف على القارئ</h2>
-  <p class="hint">ملف صوتي (WAV/MP3/M4A) لا يقلّ عن 3 ثوانٍ. النموذج يقارنها بكل القرّاء في قاعدة البيانات (المدمجة + التي أضفتها).</p>
+  <p class="hint">ملف صوتي أو <b>فيديو</b> (WAV/MP3/M4A/MP4/MKV…) لا يقلّ عن 3 ثوانٍ. من الفيديو يُستخرج أول 40 ثانية من الصوت تلقائياً. النموذج يقارنها بكل القرّاء في قاعدة البيانات (المدمجة + التي أضفتها).</p>
   <div class="drop" id="dropId">
     <div>اسحب وأفلت الملف هنا أو <b>اضغط للاختيار</b></div>
     <small id="idName">لم يُختَر ملف</small>
-    <input type="file" id="fileId" accept="audio/*" hidden>
+    <input type="file" id="fileId" accept="audio/*,video/*" hidden>
   </div>
   <div class="row">
     <button class="act" id="btnId" disabled>تعرّف الآن</button>
@@ -153,9 +153,9 @@ label.field span{display:block;color:var(--muted);font-size:12px;margin-bottom:6
   </div>
   <label class="field"><span>نبذة</span><textarea id="rBio" rows="2" placeholder="نبذة قصيرة"></textarea></label>
   <div class="drop" id="dropAdd">
-    <div>اسحب عيّنات صوتية هنا أو <b>اضغط للاختيار</b> (يمكن اختيار عدة ملفات)</div>
+    <div>اسحب عيّنات صوتية أو فيديو هنا أو <b>اضغط للاختيار</b> (يمكن اختيار عدة ملفات)</div>
     <small>الأفضل: 3-5 عيّنات، كل واحدة 10 ثوانٍ فأكثر</small>
-    <input type="file" id="fileAdd" accept="audio/*" multiple hidden>
+    <input type="file" id="fileAdd" accept="audio/*,video/*" multiple hidden>
   </div>
   <div id="addFiles" class="files"></div>
   <div class="row">
@@ -433,3 +433,4 @@ async function loadHist(){
 </script>
 </body>
 </html>
+
