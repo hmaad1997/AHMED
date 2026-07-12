@@ -29,3 +29,7 @@ aiofiles==23.2.1
 
 # Testing
 requests==2.31.0
+
+
+# Video → audio extraction (bundles ffmpeg binary for PyInstaller)
+imageio-ffmpeg==0.4.9
