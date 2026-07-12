@@ -28,7 +28,6 @@ jobs:
       - name: Smoke test - fingerprint pipeline (single reciter)
         run: python smoke_test.py
       - name: Build pretrained reciter database
-        continue-on-error: true
         run: python scripts/build_pretrained_db.py
       - name: Enrich from open-source Quran APIs
         continue-on-error: true
@@ -60,6 +59,8 @@ jobs:
             quran-reciter-id/backend/data/youtube_enrichment_report.json
             quran-reciter-id/backend/data/youtube_enrichment_report.csv
           if-no-files-found: warn
+      - name: Verify bundled fingerprint database
+        run: python verify_bundle.py
       - name: Ensure data folder exists
         run: if (!(Test-Path data)) { New-Item -ItemType Directory -Path data | Out-Null }
       - name: Build EXE
