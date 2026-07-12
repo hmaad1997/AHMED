@@ -12,7 +12,7 @@ env:
 jobs:
   backend-exe:
     runs-on: windows-latest
-    timeout-minutes: 180
+    timeout-minutes: 240
     defaults:
       run:
         working-directory: quran-reciter-id/backend
@@ -33,9 +33,13 @@ jobs:
       - name: Build pretrained reciter database (364 reciters)
         continue-on-error: true
         run: python scripts/build_pretrained_db.py
-      - name: Enrich DB from open-source samples (mp3quran.net + everyayah)
+      - name: Enrich DB from open-source samples (mp3quran + everyayah + 8 more)
         continue-on-error: true
         run: python scripts/enrich_from_mp3quran.py
+      - name: Enrich DB from HF quran-reciters-8sec-dataset (106k clips → +500 reciters)
+        continue-on-error: true
+        timeout-minutes: 90
+        run: python scripts/enrich_from_hf.py
       - name: Ensure data folder exists
         run: |
           if (!(Test-Path data)) { New-Item -ItemType Directory -Path data | Out-Null }
@@ -55,3 +59,4 @@ jobs:
           name: QuranReciterID-exe
           path: quran-reciter-id/backend/dist/QuranReciterID.exe
           if-no-files-found: error
+
