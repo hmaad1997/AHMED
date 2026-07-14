@@ -490,6 +490,33 @@ except Exception as _e:
     logging.getLogger(__name__).warning("multi_source_enricher not loaded: %s", _e)
 # ======================================================================
 
+
+# ============ Parallel batch enricher + stats ============
+try:
+    from .parallel_enricher import enrich_parallel as _enrich_parallel, get_stats as _enrich_stats
+    from pydantic import BaseModel as _BM2
+
+    class _BatchParallelReq(_BM2):
+        names: List[str]
+        concurrency: int = 4
+        max_per_source: int = 2
+
+    @app.post("/batch-parallel")
+    async def batch_parallel(req: _BatchParallelReq):
+        return await _enrich_parallel(req.names, req.concurrency, req.max_per_source)
+
+    @app.get("/enrichment-stats")
+    async def enrichment_stats():
+        s = _enrich_stats()
+        s["builtin_reciters"] = _unique_reciter_count() if database else 0
+        s["user_reciters"] = len(user_db.data) if user_db else 0
+        return s
+
+    logger.info("parallel_enricher endpoints registered")
+except Exception as _e2:
+    logging.getLogger(__name__).warning("parallel_enricher not loaded: %s", _e2)
+# ==========================================================
+
 @app.exception_handler(Exception)
 async def gxh(request, exc):
     logger.exception("unhandled")
