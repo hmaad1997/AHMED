@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir torch==2.1.0+cpu torchaudio==2.1.0+cpu \
 RUN pip install --no-cache-dir -r requirements.txt
 COPY requirements-fingerprint.txt /tmp/req-fp.txt
 RUN pip install --no-cache-dir -r /tmp/req-fp.txt || true
+RUN pip install --no-cache-dir yt-dlp
 
 COPY backend/ .
 COPY auto_fingerprint_worker.py worker_startup.py app/
@@ -31,5 +32,4 @@ EXPOSE 7860
 ENV PYTHONUTF8=1
 ENV HF_HOME=/home/user/app/models
 
-# Preload main_dual_patch to register /identify-dual on app.main.app
 CMD ["python", "-c", "import app.main_dual_patch; import app.worker_startup; import uvicorn; uvicorn.run('app.main:app', host='0.0.0.0', port=7860)"]
