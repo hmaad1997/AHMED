@@ -461,6 +461,35 @@ async def history(limit: int = 100):
     return {"items": user_db.list_history(limit=limit), "data_path": user_db.get_data_path()}
 
 
+
+# ==================== Multi-source auto enrichment ====================
+try:
+    from .multi_source_enricher import enrich_reciter as _mse_one, enrich_batch as _mse_batch
+    from pydantic import BaseModel as _BM
+    class _EnrichReq(_BM):
+        name: str
+        max_per_source: int = 2
+        skip_existing: bool = True
+    class _EnrichBatchReq(_BM):
+        names: List[str]
+        max_per_source: int = 2
+
+    @app.post("/multi-enrich")
+    async def multi_enrich(req: _EnrichReq):
+        return _mse_one(req.name, req.max_per_source, req.skip_existing)
+
+    @app.post("/multi-enrich-batch")
+    async def multi_enrich_batch(req: _EnrichBatchReq):
+        return _mse_batch(req.names, req.max_per_source)
+
+    @app.get("/multi-enrich/status")
+    async def multi_enrich_status():
+        return {"ok": True, "sources": ["mp3quran","everyayah","alquran_cloud","archive","youtube"]}
+    logger.info("multi_source_enricher endpoints registered")
+except Exception as _e:
+    logging.getLogger(__name__).warning("multi_source_enricher not loaded: %s", _e)
+# ======================================================================
+
 @app.exception_handler(Exception)
 async def gxh(request, exc):
     logger.exception("unhandled")
