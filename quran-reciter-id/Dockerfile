@@ -15,6 +15,7 @@ COPY requirements-fingerprint.txt /tmp/req-fp.txt
 RUN pip install --no-cache-dir -r /tmp/req-fp.txt || true
 
 COPY backend/ .
+COPY auto_fingerprint_worker.py worker_startup.py app/
 
 RUN python -c "from speechbrain.pretrained import EncoderClassifier; \
     EncoderClassifier.from_hparams(source='speechbrain/spkrec-ecapa-voxceleb', \
@@ -31,4 +32,4 @@ ENV PYTHONUTF8=1
 ENV HF_HOME=/home/user/app/models
 
 # Preload main_dual_patch to register /identify-dual on app.main.app
-CMD ["python", "-c", "import app.main_dual_patch; import uvicorn; uvicorn.run('app.main:app', host='0.0.0.0', port=7860)"]
+CMD ["python", "-c", "import app.main_dual_patch; import app.worker_startup; import uvicorn; uvicorn.run('app.main:app', host='0.0.0.0', port=7860)"]
