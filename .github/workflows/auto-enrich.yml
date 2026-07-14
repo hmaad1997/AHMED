@@ -1,0 +1,39 @@
+name: Auto-Enrich Fingerprints
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours
+  workflow_dispatch:        # manual trigger
+
+concurrency:
+  group: auto-enrich
+  cancel-in-progress: false
+
+jobs:
+  enrich:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache enrichment cursor state
+        uses: actions/cache@v4
+        with:
+          path: .enrich_state.json
+          key: enrich-state-v1
+
+      - name: Run auto-enricher
+        env:
+          BACKEND_URL: ${{ vars.BACKEND_URL || 'https://ahmed-aew3.onrender.com' }}
+          BATCH_SIZE: '10'
+          CONCURRENCY: '4'
+          MAX_BATCHES: '3'
+          MAX_PER_SOURCE: '2'
+        run: python quran-reciter-id/scripts/auto_enricher_worker.py
+
+      - name: Persist state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .enrich_state.json
+          key: enrich-state-v1-${{ github.run_id }}
