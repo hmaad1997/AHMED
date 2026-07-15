@@ -1,10 +1,17 @@
 name: Build EXE
 on:
-  push: { branches: [main] }
+  push:
+    branches: [main]
+    paths:
+      - 'quran-reciter-id/backend/**'
+      - '.github/workflows/build-exe.yml'
   workflow_dispatch:
 env:
   PYTHONIOENCODING: utf-8
-  PYTHONUTF8: '1'
+  PYTHONUTF8: "1"
+concurrency:
+  group: build-exe-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   backend-exe:
     runs-on: windows-latest
