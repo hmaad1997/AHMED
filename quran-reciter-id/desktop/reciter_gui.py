@@ -9,7 +9,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 APP_TITLE = "من القارئ — مولّد البصمات"
 DEFAULT_SERVER = "https://your-app.onrender.com"
 UPLOAD_EP = "/upload-fingerprints"
-BATCH = 10
+BATCH = 3
 CFG = Path.home() / ".mn_alqari.json"
 FFMPEG_DIR = Path.home() / ".mn_alqari_ffmpeg"
 SR = 22050; NFFT = 4096; OL = 0.5; NBH = 20; MINA = 10; FAN = 15; MAXDT = 200
@@ -197,23 +197,19 @@ def fingerprint(path):
 # ============================================================
 
 # ترتيب العملاء حسب موثوقيتها في 2025 (android محجوب حالياً غالباً)
-YT_CLIENTS = ["tv_embedded", "ios", "web_safari", "mweb", "android", "web"]
+YT_CLIENTS = ["ios", "tv_embedded"]
 
 # صيغ بحث متعددة — لو الأولى ما رجّعت نتائج نجرّب البدائل
 def _query_variants(name):
     n = name.strip()
-    return [
-        f"{n} تلاوة قرآن",
-        f"القارئ {n} تلاوة",
-        f"{n} قرآن كريم",
-        n,
-    ]
+    return [f"{n} تلاوة قرآن"]
 
 
 def _yt_opts(client, out_dir, have_ff):
     cookies_file = CFG.parent / ".mn_alqari_cookies.txt"
     opts = {
-        "format": "bestaudio/best",
+        "format": "bestaudio*/bestaudio/best*/best/worst",
+        "ignoreerrors": True,
         "outtmpl": str(out_dir / "%(id)s.%(ext)s"),
         "quiet": True, "no_warnings": True, "noplaylist": True,
         "socket_timeout": 45, "retries": 5, "fragment_retries": 5,
@@ -261,7 +257,7 @@ def yt_dl(query, count, out_dir):
             except Exception as e:
                 errors.append(f"[{client}] {type(e).__name__}: {str(e)[:80]}")
                 # عند 403 نجرّب العميل التالي مباشرة
-                if "403" in str(e) or "Forbidden" in str(e):
+                if any(k in str(e) for k in ("403","Forbidden","Requested format","not available","Sign in")):
                     break
     return [], " | ".join(errors[-3:])  # آخر 3 أخطاء
 
