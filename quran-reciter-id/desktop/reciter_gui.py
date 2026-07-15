@@ -1,5 +1,5 @@
-"""من القارئ - أداة توليد البصمات (نسخة مدمجة)"""
-import os, sys, json, time, hashlib, shutil, threading, queue
+"""من القارئ - أداة توليد البصمات (نسخة محسّنة مع فحص تلقائي للمتطلبات)"""
+import os, sys, json, time, hashlib, shutil, threading, queue, subprocess, urllib.request, zipfile, tempfile
 from pathlib import Path
 from datetime import timedelta
 import tkinter as tk
@@ -11,8 +11,147 @@ DEFAULT_SERVER = "https://your-app.onrender.com"
 UPLOAD_EP = "/upload-fingerprints"
 BATCH = 10
 CFG = Path.home() / ".mn_alqari.json"
+FFMPEG_DIR = Path.home() / ".mn_alqari_ffmpeg"
 SR = 22050; NFFT = 4096; OL = 0.5; NBH = 20; MINA = 10; FAN = 15; MAXDT = 200
 
+# ============================================================
+# فحص المتطلبات وتثبيتها تلقائياً
+# ============================================================
+
+REQUIRED_PKGS = [
+    ("yt_dlp", "yt-dlp"),
+    ("librosa", "librosa"),
+    ("scipy", "scipy"),
+    ("numpy", "numpy"),
+    ("pandas", "pandas"),
+    ("openpyxl", "openpyxl"),
+    ("requests", "requests"),
+]
+
+FFMPEG_URL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+
+
+def find_ffmpeg():
+    """يبحث عن ffmpeg في PATH ثم في مجلد التطبيق."""
+    exe = shutil.which("ffmpeg")
+    if exe:
+        return exe
+    local = FFMPEG_DIR / "bin" / "ffmpeg.exe"
+    if local.exists():
+        # أضفه للـ PATH للعملية الحالية والأبناء
+        os.environ["PATH"] = str(local.parent) + os.pathsep + os.environ.get("PATH", "")
+        return str(local)
+    return None
+
+
+def install_ffmpeg_windows(log_cb):
+    """ينزّل ffmpeg ويفكّه في مجلد المستخدم — لا يحتاج صلاحيات مسؤول."""
+    try:
+        FFMPEG_DIR.mkdir(parents=True, exist_ok=True)
+        zip_path = FFMPEG_DIR / "ffmpeg.zip"
+        log_cb(f"⬇ تنزيل ffmpeg من BtbN ({FFMPEG_URL[:60]}...)")
+        with urllib.request.urlopen(FFMPEG_URL, timeout=120) as r, open(zip_path, "wb") as f:
+            total = int(r.headers.get("Content-Length") or 0)
+            got = 0
+            while True:
+                chunk = r.read(1024 * 256)
+                if not chunk: break
+                f.write(chunk); got += len(chunk)
+                if total:
+                    log_cb(f"  … {got / 1024 / 1024:.1f} / {total / 1024 / 1024:.1f} MB")
+        log_cb("📦 فكّ الضغط…")
+        with zipfile.ZipFile(zip_path) as z:
+            # الملفات داخل مجلد فرعي — ننقل bin/
+            names = z.namelist()
+            root = names[0].split("/")[0]
+            z.extractall(FFMPEG_DIR)
+        # نقل bin للمستوى العلوي
+        src_bin = FFMPEG_DIR / root / "bin"
+        dst_bin = FFMPEG_DIR / "bin"
+        if src_bin.exists():
+            if dst_bin.exists(): shutil.rmtree(dst_bin)
+            shutil.move(str(src_bin), str(dst_bin))
+            shutil.rmtree(FFMPEG_DIR / root, ignore_errors=True)
+        zip_path.unlink(missing_ok=True)
+        exe = FFMPEG_DIR / "bin" / "ffmpeg.exe"
+        if exe.exists():
+            os.environ["PATH"] = str(exe.parent) + os.pathsep + os.environ.get("PATH", "")
+            log_cb(f"✅ ffmpeg جاهز: {exe}")
+            return True
+        log_cb("❌ فشل التنزيل — ملف ffmpeg.exe غير موجود بعد الفك")
+        return False
+    except Exception as e:
+        log_cb(f"❌ خطأ في تنزيل ffmpeg: {type(e).__name__}: {e}")
+        return False
+
+
+def pip_install(pkg, log_cb):
+    """تثبيت حزمة عبر pip بنافذة cmd منفصلة يشوفها المستخدم."""
+    log_cb(f"📦 تثبيت {pkg} …")
+    try:
+        # على ويندوز: نافذة cmd منفصلة
+        if os.name == "nt":
+            cmd = f'"{sys.executable}" -m pip install --upgrade "{pkg}"'
+            # نافذة مرئية + انتظار الإنهاء
+            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=300)
+        else:
+            r = subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", pkg],
+                               capture_output=True, text=True, timeout=300)
+        if r.returncode == 0:
+            log_cb(f"✅ {pkg}")
+            return True
+        log_cb(f"❌ {pkg}: {r.stderr[-200:]}")
+        return False
+    except Exception as e:
+        log_cb(f"❌ {pkg}: {e}")
+        return False
+
+
+def check_and_install_all(log_cb):
+    """يفحص كل المتطلبات ويثبت الناقص. يعيد True إذا كل شي جاهز."""
+    log_cb("🔍 فحص المتطلبات…")
+    ok = True
+
+    # 1) حزم بايثون
+    missing = []
+    for mod, pkg in REQUIRED_PKGS:
+        try:
+            __import__(mod)
+            log_cb(f"  ✅ {pkg}")
+        except ImportError:
+            log_cb(f"  ⚠ {pkg} ناقص")
+            missing.append(pkg)
+
+    if missing:
+        log_cb(f"📦 تثبيت {len(missing)} حزمة…")
+        for pkg in missing:
+            if not pip_install(pkg, log_cb):
+                ok = False
+
+    # 2) تحديث yt-dlp دائماً (يوتيوب يغيّر باستمرار)
+    log_cb("🔄 تحديث yt-dlp لآخر إصدار (مهم جداً)…")
+    pip_install("yt-dlp", log_cb)
+
+    # 3) ffmpeg
+    ffm = find_ffmpeg()
+    if ffm:
+        log_cb(f"  ✅ ffmpeg: {ffm}")
+    else:
+        log_cb("  ⚠ ffmpeg غير موجود — سيتم التنزيل التلقائي")
+        if os.name == "nt":
+            if not install_ffmpeg_windows(log_cb):
+                ok = False
+        else:
+            log_cb("  ❌ ثبّت ffmpeg يدوياً على نظامك")
+            ok = False
+
+    log_cb("✅ كل المتطلبات جاهزة" if ok else "⚠ بعض المتطلبات فشلت — راجع السجل")
+    return ok
+
+
+# ============================================================
+# البصمات
+# ============================================================
 
 def _peaks(spec):
     import numpy as np
@@ -53,49 +192,81 @@ def fingerprint(path):
     return [(h, int(t * hop * 1000 / SR)) for h, t in hs], float(len(y) / SR)
 
 
-def yt_dl(query, count, out_dir):
-    import yt_dlp
-    have_ff = bool(shutil.which("ffmpeg"))
-    # ملف كوكيز اختياري بجانب ملف الإعدادات (يتجاوز 403)
+# ============================================================
+# يوتيوب — تدوير عملاء متعددين للتحايل على الحجب
+# ============================================================
+
+# ترتيب العملاء حسب موثوقيتها في 2025 (android محجوب حالياً غالباً)
+YT_CLIENTS = ["tv_embedded", "ios", "web_safari", "mweb", "android", "web"]
+
+# صيغ بحث متعددة — لو الأولى ما رجّعت نتائج نجرّب البدائل
+def _query_variants(name):
+    n = name.strip()
+    return [
+        f"{n} تلاوة قرآن",
+        f"القارئ {n} تلاوة",
+        f"{n} قرآن كريم",
+        n,
+    ]
+
+
+def _yt_opts(client, out_dir, have_ff):
     cookies_file = CFG.parent / ".mn_alqari_cookies.txt"
     opts = {
         "format": "bestaudio/best",
         "outtmpl": str(out_dir / "%(id)s.%(ext)s"),
         "quiet": True, "no_warnings": True, "noplaylist": True,
-        "socket_timeout": 30, "retries": 3, "fragment_retries": 3,
-        "extractor_retries": 3,
-        # أهم إعداد لتجاوز HTTP 403 Forbidden: استخدام عميل Android
-        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
-        "http_headers": {
-            "User-Agent": "com.google.android.youtube/19.09.37 (Linux; U; Android 14) gzip",
-            "Accept-Language": "ar,en;q=0.9",
-        },
+        "socket_timeout": 45, "retries": 5, "fragment_retries": 5,
+        "extractor_retries": 5,
+        "extractor_args": {"youtube": {"player_client": [client]}},
         "geo_bypass": True,
         "nocheckcertificate": True,
+        "source_address": "0.0.0.0",
     }
+    # User-Agent مناسب لكل عميل
+    if client == "ios":
+        opts["http_headers"] = {"User-Agent": "com.google.ios.youtube/19.09.3 (iPhone; U; CPU iOS 17_5_1 like Mac OS X)"}
+    elif client == "android":
+        opts["http_headers"] = {"User-Agent": "com.google.android.youtube/19.09.37 (Linux; U; Android 14) gzip"}
+    elif client in ("web", "web_safari", "mweb"):
+        opts["http_headers"] = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36"}
     if cookies_file.exists():
         opts["cookiefile"] = str(cookies_file)
     if have_ff:
         opts["postprocessors"] = [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "128"}]
-    files, err = [], None
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(f"ytsearch{count}:{query} تلاوة قرآن", download=True)
-            for e in (info or {}).get("entries", []) or []:
-                if not e: continue
-                vid = e.get("id", "")
-                cand = list(out_dir.glob(f"{vid}.*"))
-                if cand:
-                    files.append((str(cand[0]), e.get("webpage_url", "")))
-    except Exception as e:
-        err = f"{type(e).__name__}: {str(e)[:140]}"
-    if not files and not err:
-        err = "لا نتائج على يوتيوب" if have_ff else "ffmpeg غير مثبت"
-    return files, err
+    return opts
+
+
+def yt_dl(query, count, out_dir):
+    """يجرّب عدة عملاء × عدة صيغ بحث حتى ينجح."""
+    import yt_dlp
+    have_ff = find_ffmpeg() is not None
+    variants = _query_variants(query)
+    errors = []
+    for client in YT_CLIENTS:
+        for q in variants:
+            try:
+                with yt_dlp.YoutubeDL(_yt_opts(client, out_dir, have_ff)) as ydl:
+                    info = ydl.extract_info(f"ytsearch{count}:{q}", download=True)
+                    files = []
+                    for e in (info or {}).get("entries", []) or []:
+                        if not e: continue
+                        vid = e.get("id", "")
+                        cand = list(out_dir.glob(f"{vid}.*"))
+                        if cand:
+                            files.append((str(cand[0]), e.get("webpage_url", "")))
+                    if files:
+                        return files, None
+                    errors.append(f"[{client}|{q[:20]}] 0 نتائج")
+            except Exception as e:
+                errors.append(f"[{client}] {type(e).__name__}: {str(e)[:80]}")
+                # عند 403 نجرّب العميل التالي مباشرة
+                if "403" in str(e) or "Forbidden" in str(e):
+                    break
+    return [], " | ".join(errors[-3:])  # آخر 3 أخطاء
 
 
 def process_reciter(args):
-    import tempfile
     name, per, root = args
     out = {"reciter": name, "items": [], "hashes": 0}
     wd = Path(root) / hashlib.md5(name.encode()).hexdigest()[:12]
@@ -116,8 +287,10 @@ def process_reciter(args):
             finally:
                 try: os.remove(path)
                 except: pass
-    except Exception as e: out["error"] = str(e)
-    finally: shutil.rmtree(wd, ignore_errors=True)
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {str(e)[:120]}"
+    finally:
+        shutil.rmtree(wd, ignore_errors=True)
     return out
 
 
@@ -130,37 +303,31 @@ def upload(server, token, items):
     except Exception: return False
 
 
-def enable_clipboard(root):
-    """تفعيل نسخ/لصق/قص/تحديد للكل حتى مع الكيبورد العربي — يعتمد على keycode لا keysym."""
-    # keycodes الفيزيائية على ويندوز: C=67 V=86 X=88 A=65
-    KC = {67: "<<Copy>>", 86: "<<Paste>>", 88: "<<Cut>>", 65: "select_all"}
+# ============================================================
+# نسخ / لصق
+# ============================================================
 
+def enable_clipboard(root):
+    KC = {67: "<<Copy>>", 86: "<<Paste>>", 88: "<<Cut>>", 65: "select_all"}
     def on_key(event):
-        if not (event.state & 0x4):  # Control
-            return
+        if not (event.state & 0x4): return
         action = KC.get(event.keycode)
-        if not action:
-            return
+        if not action: return
         w = event.widget
         try:
             if action == "select_all":
-                if isinstance(w, __import__("tkinter").Text):
-                    w.tag_add("sel", "1.0", "end-1c")
-                else:
-                    w.select_range(0, "end"); w.icursor("end")
+                if isinstance(w, tk.Text): w.tag_add("sel", "1.0", "end-1c")
+                else: w.select_range(0, "end"); w.icursor("end")
             else:
                 w.event_generate(action)
-        except Exception:
-            pass
+        except Exception: pass
         return "break"
-
     for cls in ("TEntry", "Entry", "Text", "TCombobox", "Spinbox", "TSpinbox"):
         root.bind_class(cls, "<Control-KeyPress>", on_key, add="+")
         root.bind_class(cls, "<Button-3>", _show_ctx_menu, add="+")
 
 
 def _show_ctx_menu(event):
-    import tkinter as tk
     w = event.widget
     m = tk.Menu(w, tearoff=0, bg="#0f2b27", fg="#e5e7eb",
                 activebackground="#d4af37", activeforeground="#0a1f1c")
@@ -178,10 +345,14 @@ def _show_ctx_menu(event):
         m.grab_release()
 
 
+# ============================================================
+# الواجهة
+# ============================================================
+
 class App:
     def __init__(self, root):
         self.root = root
-        root.title(APP_TITLE); root.geometry("900x700"); root.configure(bg="#0a1f1c")
+        root.title(APP_TITLE); root.geometry("900x760"); root.configure(bg="#0a1f1c")
         cfg = json.loads(CFG.read_text(encoding="utf-8")) if CFG.exists() else {}
         self.excel = tk.StringVar(value=cfg.get("excel", ""))
         self.server = tk.StringVar(value=cfg.get("server", DEFAULT_SERVER))
@@ -189,11 +360,28 @@ class App:
         self.workers = tk.IntVar(value=cfg.get("workers", min(8, os.cpu_count() or 4)))
         self.per = tk.IntVar(value=cfg.get("per", 3))
         self.running = False; self.paused = False; self.stopped = False
+        self.ready = False
         self.q = queue.Queue(); self.done = self.ok = self.fail = self.hs = 0
         self.t0 = None; self.names = []
         self._ui(); root.after(200, self._poll)
         root.protocol("WM_DELETE_WINDOW", self._close)
         enable_clipboard(root)
+        # فحص المتطلبات تلقائياً عند البدء
+        root.after(500, self._preflight)
+
+    def _preflight(self):
+        self._log("═════════ فحص متطلبات التشغيل ═════════", "info")
+        self.b_start.configure(state="disabled")
+        threading.Thread(target=self._preflight_worker, daemon=True).start()
+
+    def _preflight_worker(self):
+        try:
+            ok = check_and_install_all(lambda m: self.q.put(("log", m, "info")))
+            self.ready = ok
+            self.q.put(("ready", ok, None))
+        except Exception as e:
+            self.q.put(("log", f"❌ فشل الفحص: {e}", "fail"))
+            self.q.put(("ready", False, None))
 
     def _ui(self):
         s = ttk.Style(); s.theme_use("clam")
@@ -245,6 +433,8 @@ class App:
             command=self._pause, state="disabled"); self.b_pause.pack(side="left", padx=(0, 8))
         self.b_stop = ttk.Button(ct, text="⏹  إيقاف", style="G.TButton",
             command=self._stop, state="disabled"); self.b_stop.pack(side="left")
+        self.b_recheck = ttk.Button(ct, text="🔄  إعادة فحص المتطلبات", style="G.TButton",
+            command=self._preflight); self.b_recheck.pack(side="right")
 
         p = ttk.Frame(self.root, style="C.TFrame"); p.pack(fill="x", padx=20, pady=8)
         self.pb = ttk.Progressbar(p, orient="horizontal", mode="determinate", length=100)
@@ -261,7 +451,7 @@ class App:
         lf = ttk.Frame(self.root, style="C.TFrame"); lf.pack(fill="both", expand=True, padx=20, pady=(4, 20))
         ttk.Label(lf, text="📋 السجل الحي", foreground="#d4af37").pack(anchor="w", padx=16, pady=(12, 4))
         self.log = tk.Text(lf, bg="#0a1f1c", fg="#e5e7eb", insertbackground="#d4af37",
-            font=("Consolas", 9), relief="flat", padx=12, pady=8, height=12)
+            font=("Consolas", 9), relief="flat", padx=12, pady=8, height=14)
         self.log.pack(fill="both", expand=True, padx=16, pady=(0, 16))
         self.log.tag_configure("rtl", justify="right")
         self.log.tag_configure("ok", foreground="#4ade80", justify="right")
@@ -286,6 +476,9 @@ class App:
 
     def _start(self):
         if self.running: return
+        if not self.ready:
+            if not messagebox.askyesno("تحذير", "المتطلبات لم تكتمل — قد تفشل معظم العمليات. متابعة؟"):
+                return
         if not self.excel.get() or not Path(self.excel.get()).exists():
             messagebox.showerror("خطأ", "اختر ملف Excel صحيح"); return
         if not self.token.get():
@@ -298,18 +491,11 @@ class App:
             messagebox.showerror("خطأ في قراءة الملف", str(e)); return
         if not names:
             messagebox.showerror("خطأ", "الملف فارغ"); return
-        if not shutil.which("ffmpeg"):
-            if not messagebox.askyesno("تحذير: ffmpeg غير مثبت",
-                "ffmpeg غير موجود على جهازك — تحويل MP3 لن يعمل وأغلب القرّاء رح يفشلوا.\n\n"
-                "نزّله من: https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip\n"
-                "فك الضغط وأضف مجلد bin للـ PATH.\n\nتبي تكمل رغم ذلك؟"):
-                return
         self._save()
         self.names = names
         self.done = self.ok = self.fail = self.hs = 0
         self.t0 = time.time(); self.stopped = False; self.paused = False; self.running = True
         self.pb["maximum"] = len(names); self.pb["value"] = 0
-        self.log.delete("1.0", "end")
         self._log(f"▶ بدء التشغيل — {len(names):,} قارئ • {self.workers.get()} workers", "info")
         self.b_start.configure(state="disabled")
         self.b_pause.configure(state="normal")
@@ -330,7 +516,6 @@ class App:
         self.b_stop.configure(state="disabled")
 
     def _loop(self):
-        import tempfile
         tmp = tempfile.mkdtemp(prefix="mnq_")
         batch = []
         try:
@@ -366,7 +551,13 @@ class App:
         try:
             while True:
                 kind, a, b = self.q.get_nowait()
-                if kind == "ok":
+                if kind == "log":
+                    self._log(a, b or "info")
+                elif kind == "ready":
+                    self.ready = a
+                    self.b_start.configure(state="normal")
+                    self._log("═══════════════════════════════════", "info")
+                elif kind == "ok":
                     self.ok += 1; self.done += 1; self.hs += b
                     self._log(f"✅ {a}  •  {b:,} بصمة", "ok")
                 elif kind == "fail":
@@ -381,11 +572,12 @@ class App:
                     self.b_start.configure(state="normal")
                     self.b_pause.configure(state="disabled")
                     self.b_stop.configure(state="disabled")
-                self.pb["value"] = self.done
-                self.l_cnt.configure(text=f"{self.done:,} / {len(self.names):,}")
-                self.l_ok.configure(text=f"✅ {self.ok:,}")
-                self.l_fail.configure(text=f"❌ {self.fail:,}")
-                self.l_hs.configure(text=f"🎵 {self.hs:,}")
+                if kind in ("ok", "fail"):
+                    self.pb["value"] = self.done
+                    self.l_cnt.configure(text=f"{self.done:,} / {len(self.names):,}")
+                    self.l_ok.configure(text=f"✅ {self.ok:,}")
+                    self.l_fail.configure(text=f"❌ {self.fail:,}")
+                    self.l_hs.configure(text=f"🎵 {self.hs:,}")
         except queue.Empty: pass
         self.root.after(200, self._poll)
 
