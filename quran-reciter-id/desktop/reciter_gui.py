@@ -56,9 +56,25 @@ def fingerprint(path):
 def yt_dl(query, count, out_dir):
     import yt_dlp
     have_ff = bool(shutil.which("ffmpeg"))
-    opts = {"format": "bestaudio/best", "outtmpl": str(out_dir / "%(id)s.%(ext)s"),
-            "quiet": True, "no_warnings": True, "noplaylist": True,
-            "socket_timeout": 30, "retries": 2}
+    # ملف كوكيز اختياري بجانب ملف الإعدادات (يتجاوز 403)
+    cookies_file = CFG.parent / ".mn_alqari_cookies.txt"
+    opts = {
+        "format": "bestaudio/best",
+        "outtmpl": str(out_dir / "%(id)s.%(ext)s"),
+        "quiet": True, "no_warnings": True, "noplaylist": True,
+        "socket_timeout": 30, "retries": 3, "fragment_retries": 3,
+        "extractor_retries": 3,
+        # أهم إعداد لتجاوز HTTP 403 Forbidden: استخدام عميل Android
+        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+        "http_headers": {
+            "User-Agent": "com.google.android.youtube/19.09.37 (Linux; U; Android 14) gzip",
+            "Accept-Language": "ar,en;q=0.9",
+        },
+        "geo_bypass": True,
+        "nocheckcertificate": True,
+    }
+    if cookies_file.exists():
+        opts["cookiefile"] = str(cookies_file)
     if have_ff:
         opts["postprocessors"] = [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "128"}]
     files, err = [], None
@@ -68,12 +84,11 @@ def yt_dl(query, count, out_dir):
             for e in (info or {}).get("entries", []) or []:
                 if not e: continue
                 vid = e.get("id", "")
-                # ابحث عن أي امتداد نزل
                 cand = list(out_dir.glob(f"{vid}.*"))
                 if cand:
                     files.append((str(cand[0]), e.get("webpage_url", "")))
     except Exception as e:
-        err = f"{type(e).__name__}: {str(e)[:120]}"
+        err = f"{type(e).__name__}: {str(e)[:140]}"
     if not files and not err:
         err = "لا نتائج على يوتيوب" if have_ff else "ffmpeg غير مثبت"
     return files, err
