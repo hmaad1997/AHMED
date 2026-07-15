@@ -23,22 +23,23 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller pandas openpyxl numpy scipy librosa yt-dlp requests
-      - name: Patch source (Windows EXE fixes)
+      - name: Patch source (Windows EXE hardening)
         working-directory: quran-reciter-id/desktop
         shell: pwsh
         run: |
           $f = 'reciter_gui.py'
           $c = Get-Content -Raw -Encoding UTF8 $f
-          # Fix 1: ProcessPoolExecutor -> ThreadPoolExecutor (fixes 10 windows opening on Windows EXE)
           $c = $c -replace 'ProcessPoolExecutor', 'ThreadPoolExecutor'
-          # Fix 2: remove source_address 0.0.0.0 (causes Errno 22 Invalid argument on Windows)
-          $c = $c -replace '(?m)^\s*"source_address":\s*"0\.0\.0\.0",\s*?
-', ''
-          Set-Content -Path $f -Value $c -Encoding UTF8 -NoNewline
-          Write-Host "=== Patch verification ==="
-          if ($c -match 'ProcessPoolExecutor') { Write-Error "FAIL: ProcessPoolExecutor still present" }
-          if ($c -match 'source_address') { Write-Error "FAIL: source_address still present" }
-          Write-Host "OK: both fixes applied"
+          $c = $c -replace '(?m)^\s*"source_address":\s*"0\.0\.0\.0",\s*\r?\n', ''
+          if (-not ($c -match 'AUTO-INJECTED HARDENING')) {
+            $prelude = Get-Content -Raw -Encoding UTF8 '../../.github/workflows/prelude.py'
+            $c = $prelude + $c
+          }
+          Set-Content -Path $f -Value $c -Encoding UTF8 -NoNewLine
+          if ($c -match 'ProcessPoolExecutor') { throw "FAIL: ProcessPoolExecutor still present" }
+          if ($c -match 'source_address') { throw "FAIL: source_address still present" }
+          if (-not ($c -match 'AUTO-INJECTED HARDENING')) { throw "FAIL: hardening prelude missing" }
+          Write-Host "OK: all patches applied"
       - name: Build EXE
         working-directory: quran-reciter-id/desktop
         shell: cmd
