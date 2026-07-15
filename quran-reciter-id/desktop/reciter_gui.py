@@ -104,6 +104,54 @@ def upload(server, token, items):
     except Exception: return False
 
 
+def enable_clipboard(root):
+    """تفعيل نسخ/لصق/قص/تحديد للكل حتى مع الكيبورد العربي — يعتمد على keycode لا keysym."""
+    # keycodes الفيزيائية على ويندوز: C=67 V=86 X=88 A=65
+    KC = {67: "<<Copy>>", 86: "<<Paste>>", 88: "<<Cut>>", 65: "select_all"}
+
+    def on_key(event):
+        if not (event.state & 0x4):  # Control
+            return
+        action = KC.get(event.keycode)
+        if not action:
+            return
+        w = event.widget
+        try:
+            if action == "select_all":
+                if isinstance(w, __import__("tkinter").Text):
+                    w.tag_add("sel", "1.0", "end-1c")
+                else:
+                    w.select_range(0, "end"); w.icursor("end")
+            else:
+                w.event_generate(action)
+        except Exception:
+            pass
+        return "break"
+
+    for cls in ("TEntry", "Entry", "Text", "TCombobox", "Spinbox", "TSpinbox"):
+        root.bind_class(cls, "<Control-KeyPress>", on_key, add="+")
+        root.bind_class(cls, "<Button-3>", _show_ctx_menu, add="+")
+
+
+def _show_ctx_menu(event):
+    import tkinter as tk
+    w = event.widget
+    m = tk.Menu(w, tearoff=0, bg="#0f2b27", fg="#e5e7eb",
+                activebackground="#d4af37", activeforeground="#0a1f1c")
+    try:
+        m.add_command(label="قص", command=lambda: w.event_generate("<<Cut>>"))
+        m.add_command(label="نسخ", command=lambda: w.event_generate("<<Copy>>"))
+        m.add_command(label="لصق", command=lambda: w.event_generate("<<Paste>>"))
+        m.add_separator()
+        m.add_command(label="تحديد الكل", command=lambda: (
+            w.tag_add("sel", "1.0", "end-1c") if isinstance(w, tk.Text)
+            else (w.select_range(0, "end"), w.icursor("end"))
+        ))
+        m.tk_popup(event.x_root, event.y_root)
+    finally:
+        m.grab_release()
+
+
 class App:
     def __init__(self, root):
         self.root = root
@@ -119,6 +167,7 @@ class App:
         self.t0 = None; self.names = []
         self._ui(); root.after(200, self._poll)
         root.protocol("WM_DELETE_WINDOW", self._close)
+        enable_clipboard(root)
 
     def _ui(self):
         s = ttk.Style(); s.theme_use("clam")
