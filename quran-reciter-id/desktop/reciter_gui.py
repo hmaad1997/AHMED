@@ -10,6 +10,8 @@ APP_TITLE = "من القارئ — مولّد البصمات"
 DEFAULT_SERVER = "https://your-app.onrender.com"
 UPLOAD_EP = "/upload-fingerprints"
 BATCH = 3
+GH_API = "https://api.github.com"
+BACKUP_DIR = Path.home() / "MnAlqari_Fingerprints_Backup"
 CFG = Path.home() / ".mn_alqari.json"
 FFMPEG_DIR = Path.home() / ".mn_alqari_ffmpeg"
 SR = 22050; NFFT = 4096; OL = 0.5; NBH = 20; MINA = 10; FAN = 15; MAXDT = 200
@@ -299,6 +301,43 @@ def upload(server, token, items):
     except Exception: return False
 
 
+def _safe_name(name):
+    return "".join(c if c.isalnum() or c in "-_." else "_" for c in name)[:120]
+
+
+def save_local(name, payload):
+    """احفظ نسخة محلية دائمة."""
+    try:
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        f = BACKUP_DIR / f"{_safe_name(name)}.json"
+        f.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return True
+    except Exception: return False
+
+
+def gh_upload(repo, token, name, payload):
+    """رفع بصمة قارئ إلى GitHub (Backup دائم)."""
+    if not repo or not token: return None
+    import requests, base64 as _b64
+    try:
+        path = f"fingerprints/{_safe_name(name)}.json"
+        url = f"{GH_API}/repos/{repo}/contents/{path}"
+        hdrs = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+        body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+        content_b64 = _b64.b64encode(body).decode("ascii")
+        # اجلب الـ SHA إن كان الملف موجوداً (لتحديثه بدل رفض)
+        sha = None
+        try:
+            g = requests.get(url, headers=hdrs, timeout=30)
+            if g.ok: sha = g.json().get("sha")
+        except Exception: pass
+        data = {"message": f"fingerprint: {name}", "content": content_b64, "branch": "main"}
+        if sha: data["sha"] = sha
+        r = requests.put(url, headers=hdrs, json=data, timeout=60)
+        return r.ok
+    except Exception: return False
+
+
 # ============================================================
 # نسخ / لصق
 # ============================================================
@@ -353,6 +392,8 @@ class App:
         self.excel = tk.StringVar(value=cfg.get("excel", ""))
         self.server = tk.StringVar(value=cfg.get("server", DEFAULT_SERVER))
         self.token = tk.StringVar(value=cfg.get("token", ""))
+        self.gh_repo = tk.StringVar(value=cfg.get("gh_repo", "hmaad1997/fingerprints-db"))
+        self.gh_token = tk.StringVar(value=cfg.get("gh_token", ""))
         self.workers = tk.IntVar(value=cfg.get("workers", min(8, os.cpu_count() or 4)))
         self.per = tk.IntVar(value=cfg.get("per", 3))
         self.running = False; self.paused = False; self.stopped = False
@@ -410,14 +451,23 @@ class App:
         ttk.Label(c, text="🌐 السيرفر:").grid(row=1, column=0, sticky="w", **pad)
         ttk.Entry(c, textvariable=self.server).grid(row=1, column=1, columnspan=2, sticky="ew", **pad)
 
-        ttk.Label(c, text="📄 ملف Excel:").grid(row=2, column=0, sticky="w", **pad)
-        fp = ttk.Frame(c, style="C.TFrame"); fp.grid(row=2, column=1, columnspan=2, sticky="ew", **pad)
+        ttk.Label(c, text="🐙 GitHub Repo:").grid(row=2, column=0, sticky="w", **pad)
+        ttk.Entry(c, textvariable=self.gh_repo).grid(row=2, column=1, columnspan=2, sticky="ew", **pad)
+
+        ttk.Label(c, text="🔐 GitHub Token:").grid(row=3, column=0, sticky="w", **pad)
+        ghe = ttk.Entry(c, textvariable=self.gh_token, show="•"); ghe.grid(row=3, column=1, sticky="ew", **pad)
+        gsv = tk.BooleanVar()
+        ttk.Checkbutton(c, text="إظهار", variable=gsv,
+            command=lambda: ghe.configure(show="" if gsv.get() else "•")).grid(row=3, column=2, **pad)
+
+        ttk.Label(c, text="📄 ملف Excel:").grid(row=4, column=0, sticky="w", **pad)
+        fp = ttk.Frame(c, style="C.TFrame"); fp.grid(row=4, column=1, columnspan=2, sticky="ew", **pad)
         fp.columnconfigure(0, weight=1)
         ttk.Entry(fp, textvariable=self.excel).grid(row=0, column=0, sticky="ew")
         ttk.Button(fp, text="اختر…", style="G.TButton",
             command=lambda: self._pick()).grid(row=0, column=1, padx=(8, 0))
 
-        o = ttk.Frame(c, style="C.TFrame"); o.grid(row=3, column=0, columnspan=3, sticky="ew", **pad)
+        o = ttk.Frame(c, style="C.TFrame"); o.grid(row=5, column=0, columnspan=3, sticky="ew", **pad)
         ttk.Label(o, text="⚙️ Workers:").pack(side="left", padx=(0, 6))
         ttk.Spinbox(o, from_=1, to=32, textvariable=self.workers, width=5).pack(side="left", padx=(0, 20))
         ttk.Label(o, text="🎬 فيديو/قارئ:").pack(side="left", padx=(0, 6))
@@ -462,7 +512,8 @@ class App:
     def _save(self):
         try:
             CFG.write_text(json.dumps({"token": self.token.get(), "server": self.server.get(),
-                "excel": self.excel.get(), "workers": self.workers.get(), "per": self.per.get()},
+                "excel": self.excel.get(), "workers": self.workers.get(), "per": self.per.get(),
+                "gh_repo": self.gh_repo.get(), "gh_token": self.gh_token.get()},
                 ensure_ascii=False, indent=2), encoding="utf-8")
         except: pass
 
@@ -493,6 +544,11 @@ class App:
         self.t0 = time.time(); self.stopped = False; self.paused = False; self.running = True
         self.pb["maximum"] = len(names); self.pb["value"] = 0
         self._log(f"▶ بدء التشغيل — {len(names):,} قارئ • {self.workers.get()} workers", "info")
+        self._log(f"💾 نسخ احتياطي محلي: {BACKUP_DIR}", "info")
+        if self.gh_repo.get() and self.gh_token.get():
+            self._log(f"🐙 نسخ احتياطي GitHub: {self.gh_repo.get()}", "info")
+        else:
+            self._log("⚠️  لم يُضبط GitHub Token — سيُحفظ محلياً فقط", "info")
         self.b_start.configure(state="disabled")
         self.b_pause.configure(state="normal")
         self.b_stop.configure(state="normal")
@@ -528,6 +584,12 @@ class App:
                         if r.get("items"):
                             batch.extend(r["items"])
                             self.q.put(("ok", n, r["hashes"]))
+                            # نسخ احتياطي: محلي + GitHub لكل قارئ
+                            payload = {"reciter": n, "count": r["hashes"], "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "source": "youtube", "items": r["items"]}
+                            save_local(n, payload)
+                            ok_gh = gh_upload(self.gh_repo.get(), self.gh_token.get(), n, payload)
+                            if ok_gh is True: self.q.put(("gh", n, True))
+                            elif ok_gh is False: self.q.put(("gh", n, False))
                         else:
                             self.q.put(("fail", n, r.get("error", "no items")))
                         if len(batch) >= BATCH:
@@ -562,6 +624,9 @@ class App:
                 elif kind == "upload":
                     tag = "ok" if b else "fail"
                     self._log(f"📤 رفع دفعة {a} عنصر — {'نجح' if b else 'فشل'}", tag)
+                elif kind == "gh":
+                    tag = "ok" if b else "fail"
+                    self._log(f"🐙 GitHub: {a} — {'محفوظ' if b else 'فشل الرفع'}", tag)
                 elif kind == "finish":
                     self.running = False
                     self._log("🎉 انتهى!", "info")
